@@ -4,6 +4,8 @@
 
 <p align="center">一眼分辨 DJI Pocket 4P 拍的视频是 <b>D-Log</b> 还是 <b>D-Log2</b>，并一键整理。</p>
 
+<p align="center"><a href="https://chokamin.github.io/DlogSort/"><b>在线使用（Windows / Mac / 手机）</b></a> · <a href="../../releases/latest"><b>下载 Mac 版</b></a></p>
+
 ---
 
 DJI Osmo Pocket 4P 有 D-Log 和 D-Log2 两种色彩模式，但导入电脑后文件名完全一样，没法直接区分。DlogSort 读取相机写进视频文件里的元数据，自动标出每段视频的模式。
@@ -31,7 +33,16 @@ com.dji.camera.ColorGammaSxS = D-Log | D-Log2
 ffprobe -v error -show_entries format_tags=com.dji.camera.ColorGammaSxS -of default=nw=1 视频.MP4
 ```
 
-## 下载
+## 网页版
+
+打开 **https://chokamin.github.io/DlogSort/** 就能用，Windows、Mac、Linux、手机都可以。
+
+- 视频不会上传，全部在浏览器里读取，只读文件末尾的元数据，大文件也是瞬间完成
+- 显示缩略图（读取 DJI 内嵌的预览图，不需要浏览器能解码 HEVC）、镜头、ISO、分辨率、帧率
+- 网页无法直接移动本地文件，「整理到文件夹」会生成脚本：Windows 下载 `.bat` 双击运行，macOS / Linux 下载 `.sh` 用 `sh` 运行。脚本要放在你拖进网页的那些文件 / 文件夹所在的目录
+- 可以导出 CSV 列表
+
+## Mac 版下载
 
 到 [Releases](../../releases) 下载 `DlogSort.zip`，解压后拖进「应用程序」文件夹。
 
@@ -60,6 +71,7 @@ ffprobe -v error -show_entries format_tags=com.dji.camera.ColorGammaSxS -of defa
 | `DlogSort/make_icon.swift` | 用代码绘制应用图标 |
 | `DlogSort/build.sh` | 编译、生成图标、打包签名 |
 | `DlogSort/notarize.sh` | 提交 Apple 公证、钉入票据、生成发布用 zip |
+| `docs/index.html` | 网页版（单文件，无依赖，通过 GitHub Pages 发布） |
 
 ## 适用范围
 

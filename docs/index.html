@@ -1,0 +1,802 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DlogSort</title>
+<meta name="description" content="一眼分辨 DJI Pocket 4P 视频是 D-Log 还是 D-Log2。在浏览器本地读取，视频不会上传。">
+<link rel="icon" href="icon.png">
+<style>
+:root {
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-2: #f0f0f3;
+  --text: #1d1d1f;
+  --text-2: #6e6e73;
+  --text-3: #a1a1a6;
+  --line: rgba(0, 0, 0, .08);
+  --accent: #0071e3;
+  --accent-text: #ffffff;
+  --dlog: #f26a1b;
+  --dlog-bg: rgba(255, 122, 51, .12);
+  --dlog2: #7552f5;
+  --dlog2-bg: rgba(139, 108, 255, .13);
+  --other: #d93a3f;
+  --other-bg: rgba(229, 72, 77, .1);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 24px rgba(0, 0, 0, .06);
+  --bar: rgba(255, 255, 255, .78);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161618;
+    --surface: #1e1e21;
+    --surface-2: #2a2a2e;
+    --text: #f5f5f7;
+    --text-2: #a1a1a6;
+    --text-3: #6e6e73;
+    --line: rgba(255, 255, 255, .08);
+    --accent: #2f8cff;
+    --dlog: #ff8a4c;
+    --dlog-bg: rgba(255, 122, 51, .15);
+    --dlog2: #a08bff;
+    --dlog2-bg: rgba(139, 108, 255, .17);
+    --other: #ff6b6f;
+    --other-bg: rgba(229, 72, 77, .14);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
+    --bar: rgba(30, 30, 33, .8);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161618; --surface: #1e1e21; --surface-2: #2a2a2e; --text: #f5f5f7; --text-2: #a1a1a6;
+  --text-3: #6e6e73; --line: rgba(255, 255, 255, .08); --accent: #2f8cff; --dlog: #ff8a4c;
+  --dlog-bg: rgba(255, 122, 51, .15); --dlog2: #a08bff; --dlog2-bg: rgba(139, 108, 255, .17);
+  --other: #ff6b6f; --other-bg: rgba(229, 72, 77, .14);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25); --bar: rgba(30, 30, 33, .8);
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+        "Microsoft YaHei", "Segoe UI", "Noto Sans SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+button { font: inherit; color: inherit; }
+a { color: inherit; }
+
+/* 顶栏 */
+header {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--bar);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--line);
+}
+.header-inner {
+  max-width: 1040px; margin: 0 auto; padding: 0 24px;
+  height: 56px; display: flex; align-items: center; gap: 16px;
+}
+.brand { font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
+.brand-sub { color: var(--text-2); font-size: 13px; }
+.header-inner nav { margin-left: auto; display: flex; gap: 6px; }
+.link {
+  text-decoration: none; color: var(--text-2); font-size: 13px;
+  padding: 6px 10px; border-radius: 8px;
+}
+.link:hover { background: var(--surface-2); color: var(--text); }
+
+main { flex: 1; width: 100%; max-width: 1040px; margin: 0 auto; padding: 28px 24px 0; }
+
+/* 空状态 */
+.drop {
+  border: 1.5px dashed color-mix(in srgb, var(--text-2) 35%, transparent);
+  border-radius: 22px;
+  min-height: min(62vh, 520px);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 48px 24px;
+  transition: border-color .15s, background .15s;
+}
+.drop.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.drop h1 { margin: 0; font-size: clamp(22px, 3.2vw, 28px); font-weight: 650; letter-spacing: -.015em; }
+.drop p { margin: 8px 0 0; color: var(--text-2); font-size: 15px; }
+.drop .actions { margin-top: 26px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.drop .fine { margin-top: 26px; color: var(--text-3); font-size: 12px; max-width: 520px; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 0; border-radius: 980px; cursor: pointer;
+  padding: 9px 18px; font-size: 14px; font-weight: 500;
+  background: var(--surface-2); color: var(--text);
+  transition: filter .15s, transform .05s, opacity .15s;
+  white-space: nowrap;
+}
+.btn:hover { filter: brightness(.96); }
+.btn:active { transform: scale(.98); }
+.btn.primary { background: var(--accent); color: var(--accent-text); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.large { padding: 11px 24px; font-size: 15px; }
+.btn:disabled { opacity: .45; cursor: default; filter: none; transform: none; }
+.btn svg { width: 16px; height: 16px; flex: none; }
+
+/* 列表区 */
+.toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.toolbar .count { font-weight: 650; font-size: 20px; letter-spacing: -.01em; }
+.toolbar .status { color: var(--text-2); font-size: 13px; }
+.toolbar .spacer { flex: 1; }
+.seg {
+  display: inline-flex; background: var(--surface-2); border-radius: 9px; padding: 2px;
+}
+.seg button {
+  border: 0; background: transparent; cursor: pointer; border-radius: 7px;
+  padding: 5px 14px; font-size: 13px; color: var(--text-2);
+}
+.seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, .12); font-weight: 500; }
+.icon-btn {
+  border: 0; background: transparent; cursor: pointer; border-radius: 8px;
+  width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-2);
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.icon-btn svg { width: 18px; height: 18px; }
+
+.list {
+  background: var(--surface); border-radius: 16px; box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.row {
+  display: grid; grid-template-columns: 112px 1fr auto; gap: 16px; align-items: center;
+  padding: 12px 18px 12px 12px; position: relative;
+}
+.row + .row::before {
+  content: ""; position: absolute; top: 0; left: 140px; right: 18px; height: 1px; background: var(--line);
+}
+.thumb {
+  width: 112px; height: 63px; border-radius: 8px; overflow: hidden; position: relative;
+  background: var(--surface-2); display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 0 0 .5px var(--line);
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb svg { width: 22px; height: 22px; color: var(--text-3); }
+.dur {
+  position: absolute; right: 4px; bottom: 4px; padding: 1px 5px; border-radius: 4px;
+  background: rgba(0, 0, 0, .62); color: #fff; font-size: 10.5px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.meta { min-width: 0; }
+.name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.details, .path { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.details { color: var(--text-2); margin-top: 2px; }
+.path { color: var(--text-3); direction: rtl; text-align: left; }
+.path bdi { direction: ltr; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border-radius: 980px; font-size: 12.5px; font-weight: 600; white-space: nowrap;
+  box-shadow: inset 0 0 0 .5px currentColor;
+}
+.badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge.dlog { color: var(--dlog); background: var(--dlog-bg); }
+.badge.dlog2 { color: var(--dlog2); background: var(--dlog2-bg); }
+.badge.other, .badge.unknown { color: var(--other); background: var(--other-bg); }
+.badge.pending { color: var(--text-2); background: var(--surface-2); box-shadow: none; }
+.badge.pending::before { width: 10px; height: 10px; background: none; border: 1.5px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; }
+
+.empty-filter { padding: 56px 20px; text-align: center; color: var(--text-2); }
+
+/* 底栏 */
+.bottom {
+  position: sticky; bottom: 0; z-index: 5;
+  background: var(--bar);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-top: 1px solid var(--line);
+}
+.bottom-inner {
+  max-width: 1040px; margin: 0 auto; padding: 12px 24px;
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+}
+.stat { display: inline-flex; align-items: baseline; gap: 7px; }
+.stat i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; align-self: center; }
+.stat b { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--text-2); font-size: 13px; }
+.bottom .spacer { flex: 1; }
+.bottom .btns { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.menu-wrap { position: relative; }
+.menu {
+  position: absolute; right: 0; bottom: calc(100% + 8px); min-width: 280px;
+  background: var(--surface); border-radius: 14px; box-shadow: 0 12px 40px rgba(0, 0, 0, .22), 0 0 0 .5px var(--line);
+  padding: 6px; display: none;
+}
+.menu.open { display: block; animation: pop .15s ease; }
+.menu button {
+  display: block; width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer;
+  padding: 9px 12px; border-radius: 9px;
+}
+.menu button:hover { background: var(--surface-2); }
+.menu small { display: block; color: var(--text-2); font-size: 12px; margin-top: 1px; }
+.menu .hint { padding: 8px 12px 6px; color: var(--text-3); font-size: 11.5px; border-top: 1px solid var(--line); margin-top: 4px; }
+
+footer { text-align: center; color: var(--text-3); font-size: 12px; padding: 28px 24px 32px; }
+footer p { margin: 4px 0; }
+
+/* 拖入时的整页提示 */
+.overlay {
+  position: fixed; inset: 12px; z-index: 50; border-radius: 18px;
+  border: 2px dashed var(--accent); background: color-mix(in srgb, var(--bg) 80%, transparent);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  display: none; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 600; color: var(--accent); pointer-events: none;
+}
+.overlay.on { display: flex; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 96px; z-index: 60; transform: translate(-50%, 12px);
+  background: var(--surface); color: var(--text); box-shadow: 0 8px 30px rgba(0, 0, 0, .18), 0 0 0 .5px var(--line);
+  padding: 10px 18px; border-radius: 980px; font-size: 13px; font-weight: 500;
+  opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s; max-width: calc(100vw - 32px);
+}
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+.hidden { display: none !important; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pop { from { opacity: 0; transform: translateY(4px); } }
+
+@media (max-width: 640px) {
+  .header-inner, main, .bottom-inner { padding-left: 16px; padding-right: 16px; }
+  .brand-sub { display: none; }
+  main { padding-top: 18px; }
+  .row { grid-template-columns: 80px 1fr; gap: 12px; padding: 10px 12px; }
+  .row + .row::before { left: 104px; right: 12px; }
+  .thumb { width: 80px; height: 45px; }
+  .row .badge { grid-column: 2; justify-self: start; margin-top: -4px; }
+  .path { display: none; }
+  .toolbar .seg { order: 3; width: 100%; }
+  .toolbar .seg button { flex: 1; }
+  .bottom-inner { gap: 12px 16px; }
+  .bottom .spacer { display: none; }
+  .bottom .btns { width: 100%; }
+  .bottom .btns > * { flex: 1; }
+  .bottom .btns .btn { width: 100%; justify-content: center; }
+  .menu { left: 0; right: 0; min-width: 0; }
+  .toast { bottom: 150px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <span class="brand">DlogSort</span>
+    <span class="brand-sub">分辨 DJI 视频是 D-Log 还是 D-Log2</span>
+    <nav>
+      <a class="link" href="https://github.com/Chokamin/DlogSort/releases/latest">Mac 版</a>
+      <a class="link" href="https://github.com/Chokamin/DlogSort">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section id="empty" class="drop">
+    <h1>拖入 DJI 视频或文件夹</h1>
+    <p>自动识别每段视频是 D-Log 还是 D-Log2</p>
+    <div class="actions">
+      <button class="btn primary large" data-pick="files">选择视频…</button>
+      <button class="btn large" data-pick="folder">选择文件夹…</button>
+    </div>
+    <div class="fine">
+      视频不会上传，全部在你的浏览器里读取，只读取文件末尾的元数据，几百 MB 的视频也是瞬间完成。<br>
+      手机上请从「文件」里选择原始视频，从相册选择可能会被系统转码而丢失信息。
+    </div>
+  </section>
+
+  <section id="results" class="hidden">
+    <div class="toolbar">
+      <span class="count" id="count"></span>
+      <span class="status" id="status"></span>
+      <span class="spacer"></span>
+      <div class="seg" id="filter">
+        <button data-f="all" class="on">全部</button>
+        <button data-f="dlog">D-Log</button>
+        <button data-f="dlog2">D-Log2</button>
+        <button data-f="other">其他</button>
+      </div>
+      <button class="icon-btn" data-pick="files" title="添加视频">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="icon-btn" id="clear" title="清空列表（不会删除文件）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
+      </button>
+    </div>
+    <div class="list" id="list"></div>
+  </section>
+</main>
+
+<footer>
+  <p>读取 DJI 写入视频元数据的 <code>com.dji.camera.ColorGammaSxS</code> 字段，结果确定，不靠画面猜测。</p>
+  <p>已验证 DJI Osmo Pocket 4P · <a href="https://github.com/Chokamin/DlogSort">开源</a></p>
+</footer>
+
+<div class="bottom hidden" id="bottom">
+  <div class="bottom-inner">
+    <span class="stat"><i style="background:var(--dlog)"></i><b id="n-dlog">0</b><span>D-Log</span></span>
+    <span class="stat"><i style="background:var(--dlog2)"></i><b id="n-dlog2">0</b><span>D-Log2</span></span>
+    <span class="stat hidden" id="stat-other"><i style="background:var(--other)"></i><b id="n-other">0</b><span>未识别</span></span>
+    <span class="spacer"></span>
+    <div class="btns">
+      <button class="btn" id="csv">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+        导出列表
+      </button>
+      <div class="menu-wrap">
+        <button class="btn primary" id="sort-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg>
+          整理到文件夹
+        </button>
+        <div class="menu" id="sort-menu">
+          <button data-script="bat">Windows 整理脚本<small>下载 .bat，放到视频所在位置后双击运行</small></button>
+          <button data-script="sh">macOS / Linux 整理脚本<small>下载 .sh，放到视频所在位置后用 sh 运行</small></button>
+          <div class="hint">网页无法直接移动你电脑上的文件，所以生成一个脚本来完成。视频会移到各自所在目录下的 Dlog / Dlog2 子文件夹，同名 .LRF / .SRT 一起移动。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">松开以添加</div>
+<div class="toast" id="toast"></div>
+<input type="file" id="pick-files" accept=".mp4,.mov,video/mp4,video/quicktime" multiple hidden>
+<input type="file" id="pick-folder" webkitdirectory multiple hidden>
+
+<script>
+"use strict";
+
+// ---------- MP4 / MOV 元数据解析 ----------
+// DJI 把 moov 放在文件末尾，里面的 meta/keys + ilst 存着 com.dji.camera.* 字段，
+// udta 里还嵌着 960×540 的 JPEG 缩略图，所以只需读取 moov，不用解码 HEVC 视频
+
+const GAMMA_KEY = "com.dji.camera.ColorGammaSxS";
+const LENS_KEY = "com.dji.camera.LensType";
+const ISO_KEY = "com.dji.camera.ExposureIndexAsa";
+const MAX_MOOV = 128 * 1024 * 1024;
+const utf8 = new TextDecoder("utf-8");
+
+function fourcc(dv, p) {
+  return String.fromCharCode(dv.getUint8(p), dv.getUint8(p + 1), dv.getUint8(p + 2), dv.getUint8(p + 3));
+}
+
+async function findTopBox(file, type) {
+  let pos = 0;
+  while (pos + 8 <= file.size) {
+    const dv = new DataView(await file.slice(pos, pos + 16).arrayBuffer());
+    let size = dv.getUint32(0), hdr = 8;
+    const t = fourcc(dv, 4);
+    if (size === 1) { size = Number(dv.getBigUint64(8)); hdr = 16; }
+    else if (size === 0) size = file.size - pos;
+    if (size < hdr) return null;
+    if (t === type) return { start: pos, size };
+    pos += size;
+  }
+  return null;
+}
+
+function* boxes(dv, start, end) {
+  let p = start;
+  while (p + 8 <= end) {
+    let size = dv.getUint32(p), hdr = 8;
+    const type = fourcc(dv, p + 4);
+    if (size === 1) { size = Number(dv.getBigUint64(p + 8)); hdr = 16; }
+    else if (size === 0) size = end - p;
+    if (size < hdr || p + size > end) return;
+    yield { type, start: p, end: p + size, body: p + hdr };
+    p += size;
+  }
+}
+
+function child(dv, box, type) {
+  for (const b of boxes(dv, box.body, box.end)) if (b.type === type) return b;
+  return null;
+}
+
+// QuickTime 的 meta 没有 version/flags，ISO 的有，看紧跟的是不是 hdlr 来判断
+function metaBody(dv, meta) {
+  return fourcc(dv, meta.body + 4) === "hdlr" ? meta : { ...meta, body: meta.body + 4 };
+}
+
+function readMdtaTags(dv, moov) {
+  const tags = {};
+  for (const m of boxes(dv, moov.body, moov.end)) {
+    if (m.type !== "meta") continue;
+    const meta = metaBody(dv, m);
+    const keys = child(dv, meta, "keys"), ilst = child(dv, meta, "ilst");
+    if (!keys || !ilst) continue;
+    const names = [];
+    const count = dv.getUint32(keys.body + 4);
+    let p = keys.body + 8;
+    for (let i = 0; i < count && p + 8 <= keys.end; i++) {
+      const size = dv.getUint32(p);
+      if (size < 8) break;
+      names.push(utf8.decode(new Uint8Array(dv.buffer, p + 8, size - 8)));
+      p += size;
+    }
+    for (const item of boxes(dv, ilst.body, ilst.end)) {
+      const idx = dv.getUint32(item.start + 4);
+      const data = child(dv, item, "data");
+      if (!data || !names[idx - 1]) continue;
+      const kind = dv.getUint32(data.body) & 0xffffff;
+      const vStart = data.body + 8, vLen = data.end - vStart;
+      let value;
+      if (kind === 1) value = utf8.decode(new Uint8Array(dv.buffer, vStart, vLen));
+      else if (kind === 21 || kind === 22) value = vLen === 4 ? String(dv.getUint32(vStart)) : vLen === 2 ? String(dv.getUint16(vStart)) : "";
+      else continue;
+      tags[names[idx - 1]] = value.trim();
+    }
+  }
+  return tags;
+}
+
+function readTrackInfo(dv, moov) {
+  const info = { duration: 0, width: 0, height: 0, fps: 0 };
+  const mvhd = child(dv, moov, "mvhd");
+  if (mvhd) {
+    const v = dv.getUint8(mvhd.body);
+    const ts = dv.getUint32(mvhd.body + (v ? 20 : 12));
+    const d = v ? Number(dv.getBigUint64(mvhd.body + 24)) : dv.getUint32(mvhd.body + 16);
+    if (ts) info.duration = d / ts;
+  }
+  for (const trak of boxes(dv, moov.body, moov.end)) {
+    if (trak.type !== "trak") continue;
+    const mdia = child(dv, trak, "mdia");
+    const hdlr = mdia && child(dv, mdia, "hdlr");
+    if (!hdlr || fourcc(dv, hdlr.body + 8) !== "vide") continue;
+    const tkhd = child(dv, trak, "tkhd");
+    if (tkhd) {
+      const off = dv.getUint8(tkhd.body) ? 88 : 76;
+      info.width = Math.round(dv.getUint32(tkhd.body + off) / 65536);
+      info.height = Math.round(dv.getUint32(tkhd.body + off + 4) / 65536);
+    }
+    const mdhd = child(dv, mdia, "mdhd");
+    const stbl = child(dv, child(dv, mdia, "minf") || mdia, "stbl");
+    const stts = stbl && child(dv, stbl, "stts");
+    if (mdhd && stts) {
+      const ts = dv.getUint32(mdhd.body + (dv.getUint8(mdhd.body) ? 20 : 12));
+      let samples = 0, ticks = 0;
+      const n = dv.getUint32(stts.body + 4);
+      for (let i = 0; i < n; i++) {
+        const c = dv.getUint32(stts.body + 8 + i * 8), d = dv.getUint32(stts.body + 12 + i * 8);
+        samples += c; ticks += c * d;
+      }
+      if (ticks) info.fps = samples * ts / ticks;
+    }
+    break;
+  }
+  return info;
+}
+
+// udta 里嵌的 JPEG：从第一个 FFD8FF 开始，到下一个 FFD8FF 或 udta 结尾
+function findThumbnail(buf, moov, dv) {
+  const udta = child(dv, moov, "udta");
+  if (!udta) return null;
+  const bytes = new Uint8Array(buf, udta.body, udta.end - udta.body);
+  const soi = (from) => {
+    for (let i = from; i < bytes.length - 2; i++)
+      if (bytes[i] === 0xff && bytes[i + 1] === 0xd8 && bytes[i + 2] === 0xff) return i;
+    return -1;
+  };
+  const s = soi(0);
+  if (s < 0) return null;
+  const next = soi(s + 3);
+  return new Blob([bytes.subarray(s, next < 0 ? bytes.length : next)], { type: "image/jpeg" });
+}
+
+async function analyze(file) {
+  const loc = await findTopBox(file, "moov");
+  if (!loc || loc.size > MAX_MOOV) return { mode: "unknown" };
+  const buf = await file.slice(loc.start, loc.start + loc.size).arrayBuffer();
+  const dv = new DataView(buf);
+  const moov = { type: "moov", start: 0, end: buf.byteLength, body: 8 };
+  if (dv.getUint32(0) === 1) moov.body = 16;
+  const tags = readMdtaTags(dv, moov);
+  const raw = tags[GAMMA_KEY] || "";
+  const mode = raw.toLowerCase() === "d-log" ? "dlog" : raw.toLowerCase() === "d-log2" ? "dlog2" : raw ? "other" : "unknown";
+  const thumb = findThumbnail(buf, moov, dv);
+  return {
+    mode, raw,
+    lens: tags[LENS_KEY] || "",
+    iso: tags[ISO_KEY] || "",
+    ...readTrackInfo(dv, moov),
+    thumb: thumb ? URL.createObjectURL(thumb) : null,
+  };
+}
+
+// ---------- 状态与界面 ----------
+
+const $ = (id) => document.getElementById(id);
+const clips = [];
+let filter = "all";
+let uid = 0;
+
+const MODE_LABEL = { dlog: "D-Log", dlog2: "D-Log2", unknown: "未识别", pending: "读取中" };
+const FOLDER = { dlog: "Dlog", dlog2: "Dlog2" };
+const isVideo = (name) => /\.(mp4|mov)$/i.test(name);
+
+function esc(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function fmtDuration(s) {
+  if (!s || !isFinite(s)) return "";
+  const t = Math.round(s), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+function details(c) {
+  const parts = [];
+  if (c.lens) parts.push(c.lens);
+  if (c.iso) parts.push("ISO " + c.iso);
+  if (c.width) parts.push(`${c.width}×${c.height}`);
+  if (c.fps) parts.push(`${Math.round(c.fps * 100) / 100} fps`);
+  return parts.join("  ·  ");
+}
+
+const matches = (c) =>
+  filter === "all" || c.mode === filter || (filter === "other" && (c.mode === "other" || c.mode === "unknown"));
+
+const filmIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 5v14M17 5v14M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>';
+
+function rowHTML(c) {
+  const label = c.mode === "other" ? c.raw : MODE_LABEL[c.mode];
+  const folder = c.path.includes("/") ? c.path.slice(0, c.path.lastIndexOf("/")) : "";
+  const dur = fmtDuration(c.duration);
+  return `<div class="row" title="${esc(c.path)}">
+    <div class="thumb">${c.thumb ? `<img src="${c.thumb}" alt="">` : filmIcon}${dur ? `<span class="dur">${dur}</span>` : ""}</div>
+    <div class="meta">
+      <div class="name">${esc(c.file.name)}</div>
+      <div class="details">${esc(details(c)) || "&nbsp;"}</div>
+      ${folder ? `<div class="path"><bdi>${esc(folder)}</bdi></div>` : ""}
+    </div>
+    <span class="badge ${c.mode}">${esc(label)}</span>
+  </div>`;
+}
+
+function render() {
+  const has = clips.length > 0;
+  $("empty").classList.toggle("hidden", has);
+  $("results").classList.toggle("hidden", !has);
+  $("bottom").classList.toggle("hidden", !has);
+  if (!has) return;
+
+  const count = (...m) => clips.filter((c) => m.includes(c.mode)).length;
+  const pending = count("pending"), others = count("other", "unknown");
+  $("count").textContent = `${clips.length} 个视频`;
+  $("status").textContent = pending ? `正在读取 ${pending} 个…` : "";
+  $("n-dlog").textContent = count("dlog");
+  $("n-dlog2").textContent = count("dlog2");
+  $("n-other").textContent = others;
+  $("stat-other").classList.toggle("hidden", others === 0);
+
+  const shown = clips.filter(matches);
+  const label = { dlog: "D-Log ", dlog2: "D-Log2 ", other: "其他" }[filter] || "";
+  $("list").innerHTML = shown.length
+    ? shown.map(rowHTML).join("")
+    : `<div class="empty-filter">没有${label}视频</div>`;
+
+  const ready = !pending && count("dlog", "dlog2") > 0;
+  $("sort-btn").disabled = !ready;
+  $("csv").disabled = !!pending;
+}
+
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; render(); });
+}
+
+async function addEntries(entries) {
+  const known = new Set(clips.map((c) => c.path + "|" + c.file.size));
+  const fresh = entries
+    .filter((e) => isVideo(e.file.name) && !known.has(e.path + "|" + e.file.size))
+    .sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+  if (!fresh.length) { toast("没有找到新的 MP4 / MOV 视频"); return; }
+  const added = fresh.map((e) => ({ id: ++uid, file: e.file, path: e.path, mode: "pending" }));
+  clips.push(...added);
+  render();
+  // 同时读取 4 个，避免一次打开太多文件
+  let next = 0;
+  const worker = async () => {
+    while (next < added.length) {
+      const c = added[next++];
+      try { Object.assign(c, await analyze(c.file)); }
+      catch { c.mode = "unknown"; }
+      scheduleRender();
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+}
+
+// ---------- 选择文件与拖放 ----------
+
+document.querySelectorAll("[data-pick]").forEach((b) =>
+  b.addEventListener("click", () => $(b.dataset.pick === "folder" ? "pick-folder" : "pick-files").click()));
+
+for (const id of ["pick-files", "pick-folder"]) {
+  $(id).addEventListener("change", (e) => {
+    const files = [...e.target.files];
+    addEntries(files.map((f) => ({ file: f, path: f.webkitRelativePath || f.name })));
+    e.target.value = "";
+  });
+}
+
+async function entriesFromDrop(dt) {
+  const roots = [...dt.items].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (!roots.length) return [...dt.files].map((f) => ({ file: f, path: f.name }));
+  const out = [];
+  const walk = async (entry) => {
+    if (entry.isFile) {
+      if (!isVideo(entry.name)) return;
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      out.push({ file, path: entry.fullPath.replace(/^\//, "") });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch;
+      do {
+        batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        for (const e of batch) if (!e.name.startsWith(".")) await walk(e);
+      } while (batch.length);
+    }
+  };
+  for (const r of roots) await walk(r);
+  return out;
+}
+
+let dragDepth = 0;
+const dragging = (on) => {
+  if (clips.length) $("overlay").classList.toggle("on", on);
+  else $("empty").classList.toggle("over", on);
+};
+window.addEventListener("dragenter", (e) => {
+  if (!e.dataTransfer.types.includes("Files")) return;
+  e.preventDefault(); dragDepth++; dragging(true);
+});
+window.addEventListener("dragover", (e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); });
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; dragging(false); } });
+window.addEventListener("drop", async (e) => {
+  e.preventDefault(); dragDepth = 0; dragging(false);
+  addEntries(await entriesFromDrop(e.dataTransfer));
+});
+
+// ---------- 工具栏 ----------
+
+$("filter").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  filter = b.dataset.f;
+  [...$("filter").children].forEach((x) => x.classList.toggle("on", x === b));
+  render();
+});
+
+$("clear").addEventListener("click", () => {
+  clips.forEach((c) => c.thumb && URL.revokeObjectURL(c.thumb));
+  clips.length = 0;
+  render();
+});
+
+let toastTimer;
+function toast(text) {
+  const t = $("toast");
+  t.textContent = text;
+  t.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("on"), 3000);
+}
+
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+$("csv").addEventListener("click", () => {
+  const cell = (v) => `"${String(v).replace(/"/g, '""')}"`;
+  const rows = [["文件", "色彩模式", "镜头", "ISO", "分辨率", "帧率", "时长", "路径"]];
+  for (const c of clips) {
+    rows.push([c.file.name, c.mode === "other" ? c.raw : MODE_LABEL[c.mode], c.lens || "", c.iso || "",
+      c.width ? `${c.width}x${c.height}` : "", c.fps ? Math.round(c.fps * 100) / 100 : "",
+      fmtDuration(c.duration), c.path]);
+  }
+  // 带 BOM，Excel 打开中文不乱码
+  download("DlogSort 列表.csv", "\ufeff" + rows.map((r) => r.map(cell).join(",")).join("\r\n"), "text/csv");
+  toast(`已导出 ${clips.length} 个视频的列表`);
+});
+
+const menu = $("sort-menu");
+$("sort-btn").addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("open"); });
+document.addEventListener("click", (e) => { if (!menu.contains(e.target)) menu.classList.remove("open"); });
+
+// ---------- 整理脚本 ----------
+// 网页不能移动本地文件，生成脚本让用户在视频所在位置运行。
+// 路径相对于拖入的文件 / 文件夹所在的目录，脚本会先切换到自己所在的目录
+
+function moves() {
+  return clips.filter((c) => FOLDER[c.mode]).flatMap((c) => {
+    const dir = c.path.includes("/") ? c.path.slice(0, c.path.lastIndexOf("/")) : "";
+    // 已经在对应文件夹里就跳过
+    if (dir.split("/").pop() === FOLDER[c.mode]) return [];
+    return [{ src: c.path, dest: (dir ? dir + "/" : "") + FOLDER[c.mode] }];
+  });
+}
+
+function batScript(list) {
+  const q = (p) => `"${p.replace(/\//g, "\\").replace(/%/g, "%%")}"`;
+  return [
+    "@echo off",
+    "chcp 65001 >nul",
+    'cd /d "%~dp0"',
+    "echo DlogSort: 正在整理 " + list.length + " 个视频...",
+    ...list.map((m) => `call :sortclip ${q(m.src)} ${q(m.dest)}`),
+    "echo.",
+    "echo 完成。",
+    "pause",
+    "exit /b",
+    "",
+    ":sortclip",
+    'if not exist "%~1" (echo 找不到: %~1 & exit /b)',
+    'if not exist "%~2" mkdir "%~2"',
+    'if exist "%~2\\%~nx1" (echo 跳过，目标已存在: %~1 & exit /b)',
+    'move "%~1" "%~2\\" >nul',
+    'for %%e in (LRF SRT) do if exist "%~dpn1.%%e" move "%~dpn1.%%e" "%~2\\" >nul',
+    "echo 已移动: %~1",
+    "exit /b",
+    "",
+  ].join("\r\n");
+}
+
+function shScript(list) {
+  const q = (p) => `'${p.replace(/'/g, `'\\''`)}'`;
+  return [
+    "#!/bin/sh",
+    "# DlogSort 整理脚本：把视频移到所在目录下的 Dlog / Dlog2 子文件夹",
+    'cd "$(dirname "$0")" || exit 1',
+    "sort_clip() {",
+    '  src=$1; dest=$2',
+    '  [ -e "$src" ] || { echo "找不到: $src"; return; }',
+    '  mkdir -p "$dest"',
+    '  name=$(basename "$src")',
+    '  [ -e "$dest/$name" ] && { echo "跳过，目标已存在: $src"; return; }',
+    '  mv "$src" "$dest/" && echo "已移动: $src"',
+    '  stem=${src%.*}',
+    "  for ext in LRF lrf SRT srt; do",
+    '    [ -e "$stem.$ext" ] && [ ! -e "$dest/$(basename "$stem.$ext")" ] && mv "$stem.$ext" "$dest/"',
+    "  done",
+    "}",
+    ...list.map((m) => `sort_clip ${q(m.src)} ${q(m.dest)}`),
+    'echo "完成。"',
+    "",
+  ].join("\n");
+}
+
+menu.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-script]");
+  if (!b) return;
+  menu.classList.remove("open");
+  const list = moves();
+  if (!list.length) { toast("视频都已在对应文件夹中"); return; }
+  if (b.dataset.script === "bat") {
+    download("DlogSort整理.bat", batScript(list), "application/octet-stream");
+    toast("已下载：放到视频所在位置，双击运行");
+  } else {
+    download("DlogSort整理.sh", shScript(list), "text/x-sh");
+    toast("已下载：放到视频所在位置，在终端运行 sh DlogSort整理.sh");
+  }
+});
+</script>
+</body>
+</html>
