@@ -47,7 +47,7 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key><string>DlogSort</string>
-  <key>CFBundleIdentifier</key><string>local.dlogsort</string>
+  <key>CFBundleIdentifier</key><string>io.github.chokamin.dlogsort</string>
   <key>CFBundleName</key><string>DlogSort</string>
   <key>CFBundleDisplayName</key><string>DlogSort</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -72,5 +72,12 @@ cat > "$APP/Contents/Info.plist" <<'EOF'
 </dict>
 </plist>
 EOF
-codesign --force -s - "$APP"
+# 有 Developer ID 证书就正式签名（开启 hardened runtime，公证必需），否则用临时签名
+SIGN_ID=$(security find-identity -v -p codesigning | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
+if [ -n "$SIGN_ID" ]; then
+  codesign --force --options runtime --timestamp -s "$SIGN_ID" "$APP"
+  echo "已签名: $SIGN_ID"
+else
+  codesign --force -s - "$APP"
+fi
 echo "已生成: $APP"

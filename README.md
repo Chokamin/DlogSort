@@ -36,7 +36,7 @@ ffprobe -v error -show_entries format_tags=com.dji.camera.ColorGammaSxS -of defa
 到 [Releases](../../releases) 下载 `DlogSort.zip`，解压后拖进「应用程序」文件夹。
 
 - 需要 macOS 14 或更新版本，Apple 芯片和 Intel Mac 都支持
-- 应用没有经过 Apple 公证，第一次打开时请 **右键点应用 → 打开**；或者到「系统设置 → 隐私与安全性」里点「仍要打开」
+- 已用 Developer ID 签名并通过 Apple 公证，双击即可打开
 
 ## 从源码构建
 
@@ -46,13 +46,20 @@ ffprobe -v error -show_entries format_tags=com.dji.camera.ColorGammaSxS -of defa
 ./DlogSort/build.sh
 ```
 
-会在仓库根目录生成 `DlogSort.app`。
+会在仓库根目录生成 `DlogSort.app`。钥匙串里有 Developer ID Application 证书时会自动正式签名，否则用临时签名。
+
+发布前公证（需先用 `xcrun notarytool store-credentials DlogSort-notary` 保存一次凭据）：
+
+```bash
+./DlogSort/notarize.sh
+```
 
 | 文件 | 作用 |
 |---|---|
 | `DlogSort/main.swift` | 应用全部代码（SwiftUI + AVFoundation） |
 | `DlogSort/make_icon.swift` | 用代码绘制应用图标 |
 | `DlogSort/build.sh` | 编译、生成图标、打包签名 |
+| `DlogSort/notarize.sh` | 提交 Apple 公证、钉入票据、生成发布用 zip |
 
 ## 适用范围
 
