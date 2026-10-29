@@ -20,7 +20,7 @@ DJI Osmo Pocket 4P 有 D-Log 和 D-Log2 两种色彩模式，但导入电脑后�
 - **整理到文件夹**：移到所在目录下的 `Dlog/`、`Dlog2/` 子文件夹，同名 `.LRF` 代理文件和 `.SRT` 字幕一起移动
 - 双击播放，右键在 Finder 中显示，⌘O 添加文件
 - 几千个视频也不卡：后台读取，底栏显示进度
-- 自动检查更新：有新版本时工具栏出现提示，也可以从菜单「DlogSort → 检查更新…」手动检查
+- 自动更新：使用 [Sparkle](https://sparkle-project.org)，有新版本时弹出更新窗口，一键下载安装并重新打开；也可以从菜单「DlogSort → 检查更新…」手动检查
 
 ## 原理
 
@@ -76,10 +76,25 @@ Mac 用户也可以试试「打 Finder 标签」，再在达芬奇 **偏好设�
 
 会在仓库根目录生成 `DlogSort.app`。钥匙串里有 Developer ID Application 证书时会自动正式签名，否则用临时签名。
 
-发布前公证（需先用 `xcrun notarytool store-credentials DlogSort-notary` 保存一次凭据）：
+### 发布新版本
+
+1. 在 `DlogSort/build.sh` 里把 `VERSION` 改成新版本号，`BUILD` 加 1（Sparkle 靠 `BUILD` 判断新旧）
+2. 编译并公证（需先用 `xcrun notarytool store-credentials DlogSort-notary` 保存一次凭据）：
+
+   ```bash
+   ./DlogSort/build.sh && ./DlogSort/notarize.sh
+   ```
+3. 把 `DlogSort.zip` 上传到 GitHub Release，tag 为 `v版本号`
+4. 写好发布说明（HTML），更新 Sparkle 更新源后提交推送：
+
+   ```bash
+   ./DlogSort/appcast.sh 发布说明.html
+   ```
+
+更新包用钥匙串里账户名为 `DlogSort` 的 EdDSA 私钥签名，公钥写在 `build.sh` 的 `SUPublicEDKey` 里。**私钥丢了就无法给已安装的用户推送更新**，请导出备份并妥善保管（不要放进仓库）：
 
 ```bash
-./DlogSort/notarize.sh
+./Vendor/Sparkle-2.10.0/bin/generate_keys --account DlogSort -x ~/DlogSort-sparkle-key.txt
 ```
 
 | 文件 | 作用 |
@@ -88,6 +103,7 @@ Mac 用户也可以试试「打 Finder 标签」，再在达芬奇 **偏好设�
 | `DlogSort/make_icon.swift` | 用代码绘制应用图标 |
 | `DlogSort/build.sh` | 编译、生成图标、打包签名 |
 | `DlogSort/notarize.sh` | 提交 Apple 公证、钉入票据、生成发布用 zip |
+| `DlogSort/appcast.sh` | 签名更新包，写入 Sparkle 更新源 `docs/appcast.xml` |
 | `docs/index.html` | 网页版（单文件，无依赖，通过 GitHub Pages 发布） |
 
 ## 适用范围

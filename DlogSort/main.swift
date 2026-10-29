@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import Sparkle
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -462,7 +463,6 @@ func displayFolder(_ url: URL) -> String {
 
 struct ContentView: View {
     @ObservedObject var store = Store.shared
-    @ObservedObject var updater = Updater.shared
     @State private var targeted = false
     @State private var confirmMove = false
     @State private var filter = Filter.all
@@ -490,7 +490,6 @@ struct ContentView: View {
         }
         .navigationTitle("DlogSort")
         .navigationSubtitle(subtitle)
-        .task { await updater.check(userInitiated: false) }
         .toolbar { toolbar }
         .onDrop(of: [.fileURL], isTargeted: $targeted.animation(.easeOut(duration: 0.15))) { providers in
             for p in providers {
@@ -527,14 +526,6 @@ struct ContentView: View {
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
-            if let update = updater.available {
-                Button { updater.showUpdate(update) } label: {
-                    Label("新版本 \(update.version)", systemImage: "arrow.down.circle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .foregroundStyle(Color.accentColor)
-                }
-                .help("DlogSort \(update.version) 已发布，点击查看并下载")
-            }
             Button { store.openPanel() } label: { Label("添加视频", systemImage: "plus") }
                 .help("添加视频或文件夹（⌘O）")
             if !store.clips.isEmpty {
@@ -800,87 +791,28 @@ struct ToastView: View {
 }
 
 // MARK: - 检查更新
-// 读取 GitHub 上最新的 Release，版本号比当前高就提示下载
-
-let releasesAPI = URL(string: "https://api.github.com/repos/Chokamin/DlogSort/releases/latest")!
-
-struct UpdateInfo: Equatable {
-    let version: String
-    let notes: String
-    let page: URL
-    let download: URL?
-}
-
-// 按数字逐段比较版本号，"1.10" 比 "1.9" 新
-func isNewer(_ a: String, than b: String) -> Bool {
-    let pa = a.split(separator: ".").map { Int($0) ?? 0 }
-    let pb = b.split(separator: ".").map { Int($0) ?? 0 }
-    for i in 0..<max(pa.count, pb.count) {
-        let x = i < pa.count ? pa[i] : 0, y = i < pb.count ? pb[i] : 0
-        if x != y { return x > y }
-    }
-    return false
-}
-
-func fetchLatestRelease() async throws -> UpdateInfo {
-    var req = URLRequest(url: releasesAPI, timeoutInterval: 15)
-    req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-    let (data, resp) = try await URLSession.shared.data(for: req)
-    guard (resp as? HTTPURLResponse)?.statusCode == 200,
-          let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let tag = json["tag_name"] as? String,
-          let page = (json["html_url"] as? String).flatMap(URL.init(string:))
-    else { throw URLError(.badServerResponse) }
-    let assets = json["assets"] as? [[String: Any]] ?? []
-    let zip = assets.first { ($0["name"] as? String)?.hasSuffix(".zip") == true }
-    return UpdateInfo(version: tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV")),
-                      notes: json["body"] as? String ?? "",
-                      page: page,
-                      download: (zip?["browser_download_url"] as? String).flatMap(URL.init(string:)))
-}
+// 用 Sparkle：读取 GitHub Pages 上的 appcast.xml，有新版本时弹出标准的更新窗口，
+// 下载后校验签名、替换应用并重新打开。启动后按 Sparkle 默认的间隔（一天）自动检查
 
 @MainActor
 final class Updater: ObservableObject {
     static let shared = Updater()
-    @Published var available: UpdateInfo?
+    let controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    @Published var canCheck = false
 
-    let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
-
-    // 启动时静默检查：只在有新版本时让工具栏出现按钮；从菜单手动检查时每种结果都弹窗告知
-    func check(userInitiated: Bool) async {
-        do {
-            let latest = try await fetchLatestRelease()
-            if isNewer(latest.version, than: current) {
-                available = latest
-                if userInitiated { showUpdate(latest) }
-            } else if userInitiated {
-                alert("已是最新版本", "当前版本 \(current) 是最新的。")
-            }
-        } catch {
-            if userInitiated { alert("无法检查更新", "请检查网络连接后再试。\n\(error.localizedDescription)") }
-        }
+    private init() {
+        controller.updater.publisher(for: \.canCheckForUpdates).assign(to: &$canCheck)
     }
 
-    func showUpdate(_ info: UpdateInfo) {
-        let a = NSAlert()
-        a.messageText = "DlogSort \(info.version) 可以更新了"
-        let notes = info.notes.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "## ", with: "")
-        a.informativeText = "当前版本 \(current)。\n\n\(notes)\n\n下载后解压，把新的 DlogSort 拖进「应用程序」替换旧版。"
-        a.addButton(withTitle: "下载新版本")
-        a.addButton(withTitle: "查看发布页")
-        a.addButton(withTitle: "稍后")
-        switch a.runModal() {
-        case .alertFirstButtonReturn: NSWorkspace.shared.open(info.download ?? info.page)
-        case .alertSecondButtonReturn: NSWorkspace.shared.open(info.page)
-        default: break
-        }
-    }
+    func check() { controller.checkForUpdates(nil) }
+}
 
-    private func alert(_ title: String, _ text: String) {
-        let a = NSAlert()
-        a.messageText = title
-        a.informativeText = text
-        a.runModal()
+struct CheckForUpdatesButton: View {
+    @ObservedObject var updater = Updater.shared
+
+    var body: some View {
+        Button("检查更新…") { updater.check() }
+            .disabled(!updater.canCheck)
     }
 }
 
@@ -897,6 +829,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct DlogSortApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
+    init() { _ = Updater.shared }
+
     var body: some Scene {
         Window("DlogSort", id: "main") { ContentView() }
             .defaultSize(width: 920, height: 580)
@@ -906,7 +840,7 @@ struct DlogSortApp: App {
                         .keyboardShortcut("o")
                 }
                 CommandGroup(after: .appInfo) {
-                    Button("检查更新…") { Task { await Updater.shared.check(userInitiated: true) } }
+                    CheckForUpdatesButton()
                 }
             }
     }

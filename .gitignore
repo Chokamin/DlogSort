@@ -13,3 +13,6 @@
 # 本地工具配置
 .claude/
 *.csv
+
+# 第三方框架（build.sh 会自动下载）
+Vendor/
