@@ -330,10 +330,17 @@ footer p { margin: 4px 0; }
     <span class="stat hidden" id="stat-other"><i style="background:var(--other)"></i><b id="n-other">0</b><span>未识别</span></span>
     <span class="spacer"></span>
     <div class="btns">
-      <button class="btn" id="csv">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
-        导出列表
-      </button>
+      <div class="menu-wrap">
+        <button class="btn" id="export-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+          导出
+        </button>
+        <div class="menu" id="export-menu">
+          <button data-export="resolve">达芬奇元数据<small>导入后片段带上 D-Log / D-Log2 关键词，自动生成智能媒体夹</small></button>
+          <button data-export="list">表格列表<small>所有视频的模式、镜头、ISO、分辨率等，可用 Excel 打开</small></button>
+          <div class="hint">达芬奇里：文件 → 导入元数据至 → 媒体池，选中 CSV；勾选「用文件名称匹配」，取消勾选「使用片段起始和终止时间码匹配」。关键词在元数据面板的「Shot &amp; Scene」组里；在偏好设置 → 用户 → 剪辑 →「自动智能媒体夹」勾选「关键词」可自动分类。</div>
+        </div>
+      </div>
       <div class="menu-wrap">
         <button class="btn primary" id="sort-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg>
@@ -589,7 +596,7 @@ function render() {
 
   const ready = !pending && count("dlog", "dlog2") > 0;
   $("sort-btn").disabled = !ready;
-  $("csv").disabled = !!pending;
+  $("export-btn").disabled = !!pending;
 }
 
 let renderQueued = false;
@@ -704,8 +711,10 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-$("csv").addEventListener("click", () => {
-  const cell = (v) => `"${String(v).replace(/"/g, '""')}"`;
+const csvCell = (v) => (/[",\r\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+const csvText = (rows) => rows.map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
+
+function exportList() {
   const rows = [["文件", "色彩模式", "镜头", "ISO", "分辨率", "帧率", "时长", "路径"]];
   for (const c of clips) {
     rows.push([c.file.name, c.mode === "other" ? c.raw : MODE_LABEL[c.mode], c.lens || "", c.iso || "",
@@ -713,13 +722,39 @@ $("csv").addEventListener("click", () => {
       fmtDuration(c.duration), c.path]);
   }
   // 带 BOM，Excel 打开中文不乱码
-  download("DlogSort 列表.csv", "\ufeff" + rows.map((r) => r.map(cell).join(",")).join("\r\n"), "text/csv");
+  download("DlogSort 列表.csv", "\ufeff" + csvText(rows), "text/csv");
   toast(`已导出 ${clips.length} 个视频的列表`);
+}
+
+// 给达芬奇「文件 → 导入元数据至 → 媒体池」用：按文件名匹配片段，写入关键词。
+// 列名必须和达芬奇的元数据字段名一致；不能带 BOM，否则第一列表头匹配不上
+function exportResolve() {
+  const rows = [["File Name", "Keywords"]];
+  for (const c of clips) if (FOLDER[c.mode]) rows.push([c.file.name, MODE_LABEL[c.mode]]);
+  download("DlogSort 达芬奇元数据.csv", csvText(rows), "text/csv");
+  toast(`已导出 ${rows.length - 1} 个片段，在达芬奇里导入元数据到媒体池`);
+}
+
+$("export-menu").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-export]");
+  if (!b) return;
+  $("export-menu").classList.remove("open");
+  b.dataset.export === "resolve" ? exportResolve() : exportList();
 });
 
+// 底栏的两个弹出菜单，同一时间只开一个
+const menus = [["export-btn", "export-menu"], ["sort-btn", "sort-menu"]].map(([b, m]) => [$(b), $(m)]);
+for (const [btn, m] of menus) {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    menus.forEach(([, other]) => other !== m && other.classList.remove("open"));
+    m.classList.toggle("open");
+  });
+}
+document.addEventListener("click", (e) => {
+  for (const [, m] of menus) if (!m.contains(e.target)) m.classList.remove("open");
+});
 const menu = $("sort-menu");
-$("sort-btn").addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("open"); });
-document.addEventListener("click", (e) => { if (!menu.contains(e.target)) menu.classList.remove("open"); });
 
 // ---------- 整理脚本 ----------
 // 网页不能移动本地文件，生成脚本让用户在视频所在位置运行。

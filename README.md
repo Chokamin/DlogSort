@@ -15,7 +15,8 @@ DJI Osmo Pocket 4P 有 D-Log 和 D-Log2 两种色彩模式，但导入电脑后�
 - **拖进来就识别**：把视频或整个文件夹拖进窗口（或拖到 Dock 图标上），子文件夹也会扫描
 - **列表展示**：缩略图、时长、镜头、ISO、分辨率、帧率，以及醒目的 D-Log / D-Log2 标记
 - **筛选**：全部 / D-Log / D-Log2 / 其他
-- **打 Finder 标签**：给视频加上 `Dlog` 或 `Dlog2` 标签，文件位置不变
+- **打 Finder 标签**：给视频加上橙色 `Dlog` 或紫色 `Dlog2` 标签，文件位置不变
+- **导出到达芬奇**：生成元数据 CSV，导入 DaVinci Resolve 后片段带上 `D-Log` / `D-Log2` 关键词，可自动生成智能媒体夹
 - **整理到文件夹**：移到所在目录下的 `Dlog/`、`Dlog2/` 子文件夹，同名 `.LRF` 代理文件和 `.SRT` 字幕一起移动
 - 双击播放，右键在 Finder 中显示，⌘O 添加文件
 
@@ -32,6 +33,20 @@ com.dji.camera.ColorGammaSxS = D-Log | D-Log2
 ```bash
 ffprobe -v error -show_entries format_tags=com.dji.camera.ColorGammaSxS -of default=nw=1 视频.MP4
 ```
+
+## 在达芬奇里使用
+
+点「导出到达芬奇」（网页版在「导出 → 达芬奇元数据」）得到 CSV，然后在 DaVinci Resolve 里：
+
+1. 把视频导入媒体池
+2. **文件 → 导入元数据至 → 媒体池**，选中 CSV
+3. 勾选「用文件名称匹配」，**取消勾选**「使用片段起始和终止时间码匹配」，点确定
+4. 片段会带上关键词 `D-Log` 或 `D-Log2`，在元数据面板的 **Shot & Scene** 组里查看，或在媒体池列表视图中显示「关键词」列
+5. 在 **偏好设置 → 用户 → 剪辑 → 自动智能媒体夹** 勾选「关键词」，智能媒体夹里会自动出现 D-Log 和 D-Log2，方便分别套用 LUT
+
+已在 DaVinci Resolve 21.1.2 上用 131 个 Pocket 4P 片段验证。
+
+Mac 用户也可以试试「打 Finder 标签」，再在达芬奇 **偏好设置 → 用户 → 剪辑** 打开 *Import Finder tags as Keywords*，导入素材时自动带上标签（这个方式还没实测，推荐用上面的 CSV）。
 
 ## 网页版
 

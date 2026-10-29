@@ -9,6 +9,7 @@ let lensKey = "mdta/com.dji.camera.LensType"
 let isoKey = "mdta/com.dji.camera.ExposureIndexAsa"
 let videoExts: Set<String> = ["mp4", "mov"]
 let sidecarExts = ["LRF", "lrf", "SRT", "srt"]
+let tagsAttr = "com.apple.metadata:_kMDItemUserTags"
 
 extension Color {
     init(hex: UInt32) {
@@ -32,6 +33,15 @@ enum Mode: String {
         case .other: return .gray
         case .unknown: return Color(hex: 0xE5484D)
         case .pending: return .secondary
+        }
+    }
+
+    // Finder 标签颜色编号：7 橙色，3 紫色
+    var tagColor: Int? {
+        switch self {
+        case .dlog: return 7
+        case .dlog2: return 3
+        default: return nil
         }
     }
 
@@ -184,14 +194,63 @@ final class Store: ObservableObject {
     func applyTags() {
         var n = 0
         for c in clips {
-            guard let tag = c.mode.folderName else { continue }
-            var tags = ((try? c.url.resourceValues(forKeys: [.tagNamesKey]))?.tagNames ?? [])
-                .filter { $0 != "Dlog" && $0 != "Dlog2" }
-            tags.append(tag)
-            // URLResourceValues.tagNames 的 setter 要 macOS 26，用 NSURL 的写法兼容旧系统
-            if (try? (c.url as NSURL).setResourceValue(tags, forKey: .tagNamesKey)) != nil { n += 1 }
+            guard let tag = c.mode.folderName, let color = c.mode.tagColor else { continue }
+            if writeTag(c.url, tag: tag, color: color) { n += 1 }
         }
         show("tag.fill", "已为 \(n) 个视频添加 Finder 标签")
+    }
+
+    // 标签存在扩展属性里，是一个字符串数组，每项为 "名称\n颜色编号"。
+    // 直接读写它才能带上颜色（达芬奇「将 Finder 标签导入为关键词」读的是颜色标签），并保留文件原有的其他标签
+    private func writeTag(_ url: URL, tag: String, color: Int) -> Bool {
+        var tags: [String] = []
+        let size = getxattr(url.path, tagsAttr, nil, 0, 0, 0)
+        if size > 0 {
+            var data = Data(count: size)
+            _ = data.withUnsafeMutableBytes { getxattr(url.path, tagsAttr, $0.baseAddress, size, 0, 0) }
+            tags = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String] ?? []
+        }
+        tags.removeAll { ["Dlog", "Dlog2"].contains($0.components(separatedBy: "\n")[0]) }
+        tags.append("\(tag)\n\(color)")
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: tags, format: .binary, options: 0)
+        else { return false }
+        return data.withUnsafeBytes { setxattr(url.path, tagsAttr, $0.baseAddress, data.count, 0, 0) } == 0
+    }
+
+    // 导出给达芬奇「文件 → 导入元数据 → 媒体池」用的 CSV：按文件名匹配片段，写入关键词 D-Log / D-Log2。
+    // 列名必须和达芬奇的元数据字段名一致；不能带 BOM，否则第一列表头匹配不上
+    func exportResolveCSV() {
+        let rows = clips.filter { $0.mode.folderName != nil }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "DlogSort 达芬奇元数据.csv"
+        panel.allowedContentTypes = [.commaSeparatedText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        var lines = ["File Name,Clip Directory,Keywords"]
+        for c in rows {
+            lines.append([c.url.lastPathComponent, c.url.deletingLastPathComponent().path, c.mode.rawValue]
+                .map(csvField).joined(separator: ","))
+        }
+        do {
+            try Data((lines.joined(separator: "\r\n") + "\r\n").utf8).write(to: url)
+        } catch {
+            show("exclamationmark.triangle.fill", "导出失败：\(error.localizedDescription)", warning: true)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "已导出 \(rows.count) 个片段的达芬奇元数据"
+        alert.informativeText = """
+        在达芬奇里：
+        1. 把这些视频导入媒体池
+        2. 选择「文件 → 导入元数据至 → 媒体池」，选中这个 CSV
+        3. 勾选「用文件名称匹配」，取消勾选「使用片段起始和终止时间码匹配」，点确定
+        4. 片段会带上关键词 D-Log 或 D-Log2：在元数据面板的「Shot & Scene」组里查看，或在媒体池列表视图中显示「关键词」列
+        5. 在偏好设置 → 用户 → 剪辑 →「自动智能媒体夹」里勾选「关键词」，媒体池的智能媒体夹里就会出现 D-Log 和 D-Log2
+        """
+        alert.addButton(withTitle: "好")
+        alert.addButton(withTitle: "在 Finder 中显示")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
     }
 
     func sortIntoFolders() {
@@ -246,6 +305,10 @@ enum Filter: String, CaseIterable, Identifiable {
     }
 }
 
+func csvField(_ s: String) -> String {
+    s.contains(where: { ",\"\r\n".contains($0) }) ? "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : s
+}
+
 func formatDuration(_ s: Double) -> String {
     guard s.isFinite, s > 0 else { return "" }
     let t = Int(s.rounded())
@@ -278,7 +341,7 @@ struct ContentView: View {
                     .overlay { if targeted { DropOverlay() } }
             }
         }
-        .frame(minWidth: 680, minHeight: 440)
+        .frame(minWidth: 820, minHeight: 440)
         .overlay(alignment: .bottom) {
             if let t = store.toast {
                 ToastView(toast: t)
@@ -365,7 +428,9 @@ struct ContentView: View {
             if others > 0 { StatView(mode: .unknown, count: others, label: "未识别") }
             Spacer()
             Button { store.applyTags() } label: { Label("打 Finder 标签", systemImage: "tag") }
-                .help("给每个视频加上 Dlog / Dlog2 标签，文件不移动")
+                .help("给每个视频加上橙色 Dlog / 紫色 Dlog2 标签，文件不移动")
+            Button { store.exportResolveCSV() } label: { Label("导出到达芬奇", systemImage: "square.and.arrow.up") }
+                .help("导出元数据 CSV，在达芬奇里导入后片段会带上 D-Log / D-Log2 关键词")
             Button { confirmMove = true } label: { Label("整理到文件夹", systemImage: "folder.badge.plus") }
                 .buttonStyle(.borderedProminent)
                 .help("移到所在目录下的 Dlog / Dlog2 子文件夹")
@@ -578,7 +643,7 @@ struct DlogSortApp: App {
 
     var body: some Scene {
         Window("DlogSort", id: "main") { ContentView() }
-            .defaultSize(width: 880, height: 580)
+            .defaultSize(width: 920, height: 580)
             .commands {
                 CommandGroup(replacing: .newItem) {
                     Button("添加视频…") { Store.shared.openPanel() }
