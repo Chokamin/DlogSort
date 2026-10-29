@@ -74,16 +74,41 @@ struct Clip: Identifiable {
     var modeLabel: String { mode == .other ? (info?.rawGamma ?? "") : mode.rawValue }
 }
 
-func readInfo(_ url: URL) async -> ClipInfo {
+// 以下函数都不在主线程上运行，读文件、写标签、移动文件时界面保持响应
+
+func collectVideos(_ urls: [URL]) -> [URL] {
+    var found: [URL] = []
+    let fm = FileManager.default
+    for url in urls {
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
+        if isDir.boolValue {
+            let e = fm.enumerator(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            while let f = e?.nextObject() as? URL {
+                if videoExts.contains(f.pathExtension.lowercased()) { found.append(f) }
+            }
+        } else if videoExts.contains(url.pathExtension.lowercased()) {
+            found.append(url)
+        }
+    }
+    return found
+}
+
+// 读取模式和参数，顺便拿到 DJI 内嵌的预览图（itsk/covr 是 960×540 JPEG，itsk/tnal 是小图），
+// 有内嵌图就不必解码 4K HEVC 视频来生成缩略图
+func loadClip(_ url: URL) async -> (URL, ClipInfo, CGImage?) {
     let asset = AVURLAsset(url: url)
     var info = ClipInfo()
-    guard let items = try? await asset.load(.metadata) else { return info }
+    guard let items = try? await asset.load(.metadata) else { return (url, info, nil) }
     var gamma = ""
+    var cover: Data?, small: Data?
     for item in items {
         switch item.identifier?.rawValue {
         case gammaKey: gamma = (try? await item.load(.stringValue)) ?? ""
         case lensKey: info.lens = (try? await item.load(.stringValue)) ?? ""
         case isoKey: info.iso = ((try? await item.load(.stringValue)) ?? "").trimmingCharacters(in: .whitespaces)
+        case "itsk/covr": cover = try? await item.load(.dataValue)
+        case "itsk/tnal": small = try? await item.load(.dataValue)
         default: break
         }
     }
@@ -99,15 +124,68 @@ func readInfo(_ url: URL) async -> ClipInfo {
         info.size = (try? await track.load(.naturalSize)) ?? .zero
         info.fps = (try? await track.load(.nominalFrameRate)) ?? 0
     }
-    return info
+    var thumb = (cover ?? small).flatMap(decodeThumbnail)
+    if thumb == nil { thumb = await makeThumbnail(asset) }
+    return (url, info, thumb)
 }
 
-func makeThumbnail(_ url: URL) async -> CGImage? {
-    let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+func decodeThumbnail(_ data: Data) -> CGImage? {
+    guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+    let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                 kCGImageSourceThumbnailMaxPixelSize: 320]
+    return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+}
+
+func makeThumbnail(_ asset: AVAsset) async -> CGImage? {
+    let gen = AVAssetImageGenerator(asset: asset)
     gen.appliesPreferredTrackTransform = true
     gen.maximumSize = CGSize(width: 320, height: 180)
     gen.requestedTimeToleranceAfter = .positiveInfinity
     return try? await gen.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+}
+
+// 标签存在扩展属性里，是一个字符串数组，每项为 "名称\n颜色编号"。
+// 直接读写它才能带上颜色（达芬奇「将 Finder 标签导入为关键词」读的是颜色标签），并保留文件原有的其他标签
+func writeTag(_ url: URL, tag: String, color: Int) -> Bool {
+    var tags: [String] = []
+    let size = getxattr(url.path, tagsAttr, nil, 0, 0, 0)
+    if size > 0 {
+        var data = Data(count: size)
+        _ = data.withUnsafeMutableBytes { getxattr(url.path, tagsAttr, $0.baseAddress, size, 0, 0) }
+        tags = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String] ?? []
+    }
+    tags.removeAll { ["Dlog", "Dlog2"].contains($0.components(separatedBy: "\n")[0]) }
+    tags.append("\(tag)\n\(color)")
+    guard let data = try? PropertyListSerialization.data(fromPropertyList: tags, format: .binary, options: 0)
+    else { return false }
+    return data.withUnsafeBytes { setxattr(url.path, tagsAttr, $0.baseAddress, data.count, 0, 0) } == 0
+}
+
+// 移到所在目录下的 Dlog / Dlog2 子文件夹，返回移动成功的新位置
+func moveClip(_ src: URL, into folder: String) -> (URL?, failed: Bool) {
+    let fm = FileManager.default
+    let parent = src.deletingLastPathComponent()
+    // 已经在对应文件夹里就跳过
+    if parent.lastPathComponent == folder { return (nil, false) }
+    let dir = parent.appendingPathComponent(folder, isDirectory: true)
+    let dst = dir.appendingPathComponent(src.lastPathComponent)
+    do {
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        guard !fm.fileExists(atPath: dst.path) else { return (nil, true) }
+        try fm.moveItem(at: src, to: dst)
+    } catch {
+        return (nil, true)
+    }
+    // 同名的 LRF 代理文件、SRT 字幕一起移动
+    let stem = src.deletingPathExtension()
+    for ext in sidecarExts {
+        let side = stem.appendingPathExtension(ext)
+        let sideDst = dir.appendingPathComponent(side.lastPathComponent)
+        if fm.fileExists(atPath: side.path), !fm.fileExists(atPath: sideDst.path) {
+            try? fm.moveItem(at: side, to: sideDst)
+        }
+    }
+    return (dst, false)
 }
 
 struct Toast: Equatable {
@@ -117,11 +195,24 @@ struct Toast: Equatable {
     var warning = false
 }
 
+struct Activity: Equatable {
+    var label: String
+    var done: Int
+    var total: Int
+}
+
 @MainActor
 final class Store: ObservableObject {
     static let shared = Store()
     @Published var clips: [Clip] = []
     @Published var toast: Toast?
+    // 读取、打标签、整理时显示在底栏的进度
+    @Published var activity: Activity?
+
+    private var queue: [URL] = []
+    private var loader: Task<Void, Never>?
+    private var loadDone = 0, loadTotal = 0
+    private var generation = 0
 
     func show(_ icon: String, _ text: String, warning: Bool = false) {
         let t = Toast(icon: icon, text: text, warning: warning)
@@ -142,40 +233,72 @@ final class Store: ObservableObject {
     }
 
     func add(_ urls: [URL]) {
-        var found: [URL] = []
-        let fm = FileManager.default
-        for url in urls {
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
-            if isDir.boolValue {
-                let e = fm.enumerator(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-                while let f = e?.nextObject() as? URL {
-                    if videoExts.contains(f.pathExtension.lowercased()) { found.append(f) }
-                }
-            } else if videoExts.contains(url.pathExtension.lowercased()) {
-                found.append(url)
+        Task {
+            let found = await Task.detached(priority: .userInitiated) { collectVideos(urls) }.value
+            let existing = Set(clips.map { $0.url.standardizedFileURL })
+            let fresh = found.filter { !existing.contains($0.standardizedFileURL) }
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            guard !fresh.isEmpty else {
+                show("film.stack", "没有找到新的 MP4 / MOV 视频", warning: true)
+                return
+            }
+            withAnimation(.snappy) { clips.append(contentsOf: fresh.map { Clip(url: $0) }) }
+            queue.append(contentsOf: fresh)
+            loadTotal += fresh.count
+            activity = Activity(label: "正在读取", done: loadDone, total: loadTotal)
+            if loader == nil {
+                let gen = generation
+                loader = Task { await runLoader(gen) }
             }
         }
-        let existing = Set(clips.map { $0.url.standardizedFileURL })
-        let fresh = found.filter { !existing.contains($0.standardizedFileURL) }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-        guard !fresh.isEmpty else {
-            show("film.stack", "没有找到新的 MP4 / MOV 视频", warning: true)
-            return
-        }
-        withAnimation(.snappy) { clips.append(contentsOf: fresh.map { Clip(url: $0) }) }
-        for url in fresh {
-            Task {
-                let info = await readInfo(url)
-                if let i = clips.firstIndex(where: { $0.url == url }) {
-                    withAnimation(.snappy) { clips[i].info = info }
+    }
+
+    // 最多同时读 6 个文件，结果攒起来每 0.15 秒刷新一次列表，避免几百次逐个刷新拖慢界面
+    private func runLoader(_ gen: Int) async {
+        while !queue.isEmpty, gen == generation {
+            let batch = queue
+            queue.removeAll()
+            await withTaskGroup(of: (URL, ClipInfo, CGImage?).self) { group in
+                var pending = batch.makeIterator()
+                for _ in 0..<6 {
+                    guard let u = pending.next() else { break }
+                    group.addTask { await loadClip(u) }
                 }
-                let thumb = await makeThumbnail(url)
-                if let i = clips.firstIndex(where: { $0.url == url }) {
-                    withAnimation(.easeIn(duration: 0.2)) { clips[i].thumb = thumb }
+                var results: [(URL, ClipInfo, CGImage?)] = []
+                var lastFlush = Date()
+                for await r in group {
+                    guard gen == generation else { group.cancelAll(); return }
+                    results.append(r)
+                    if let u = pending.next() { group.addTask { await loadClip(u) } }
+                    if Date().timeIntervalSince(lastFlush) > 0.15 {
+                        apply(results)
+                        results.removeAll()
+                        lastFlush = Date()
+                    }
                 }
+                apply(results)
             }
         }
+        guard gen == generation else { return }
+        loader = nil
+        loadDone = 0
+        loadTotal = 0
+        activity = nil
+    }
+
+    private func apply(_ results: [(URL, ClipInfo, CGImage?)]) {
+        guard !results.isEmpty else { return }
+        var updated = clips
+        var index: [URL: Int] = [:]
+        for (i, c) in updated.enumerated() { index[c.url] = i }
+        for (url, info, thumb) in results {
+            guard let i = index[url] else { continue }
+            updated[i].info = info
+            updated[i].thumb = thumb
+        }
+        clips = updated
+        loadDone += results.count
+        activity = Activity(label: "正在读取", done: loadDone, total: loadTotal)
     }
 
     func remove(_ ids: Set<Clip.ID>) {
@@ -183,38 +306,52 @@ final class Store: ObservableObject {
     }
 
     func clear() {
+        // 让还在跑的读取任务作废，它之后返回的结果不会再写进列表
+        generation += 1
+        loader?.cancel()
+        loader = nil
+        queue.removeAll()
+        loadDone = 0
+        loadTotal = 0
+        activity = nil
         withAnimation(.snappy) { clips = [] }
     }
 
     func count(_ modes: Mode...) -> Int { clips.filter { modes.contains($0.mode) }.count }
 
     var sortable: Int { count(.dlog, .dlog2) }
-    var isReading: Bool { count(.pending) > 0 }
+    var isBusy: Bool { activity != nil }
 
-    func applyTags() {
-        var n = 0
-        for c in clips {
-            guard let tag = c.mode.folderName, let color = c.mode.tagColor else { continue }
-            if writeTag(c.url, tag: tag, color: color) { n += 1 }
-        }
-        show("tag.fill", "已为 \(n) 个视频添加 Finder 标签")
+    // 在后台逐个处理文件，每处理约 1% 更新一次进度
+    private func runInBackground<T: Sendable>(_ label: String, _ items: [T],
+                                              _ work: @escaping @Sendable (T) -> Void) async {
+        let total = items.count
+        activity = Activity(label: label, done: 0, total: total)
+        let step = max(1, total / 100)
+        await Task.detached(priority: .userInitiated) {
+            for (i, item) in items.enumerated() {
+                work(item)
+                if (i + 1) % step == 0 || i + 1 == total {
+                    let done = i + 1
+                    await MainActor.run { Store.shared.activity?.done = done }
+                }
+            }
+        }.value
+        activity = nil
     }
 
-    // 标签存在扩展属性里，是一个字符串数组，每项为 "名称\n颜色编号"。
-    // 直接读写它才能带上颜色（达芬奇「将 Finder 标签导入为关键词」读的是颜色标签），并保留文件原有的其他标签
-    private func writeTag(_ url: URL, tag: String, color: Int) -> Bool {
-        var tags: [String] = []
-        let size = getxattr(url.path, tagsAttr, nil, 0, 0, 0)
-        if size > 0 {
-            var data = Data(count: size)
-            _ = data.withUnsafeMutableBytes { getxattr(url.path, tagsAttr, $0.baseAddress, size, 0, 0) }
-            tags = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String] ?? []
+    func applyTags() {
+        let jobs = clips.compactMap { c -> (URL, String, Int)? in
+            guard let tag = c.mode.folderName, let color = c.mode.tagColor else { return nil }
+            return (c.url, tag, color)
         }
-        tags.removeAll { ["Dlog", "Dlog2"].contains($0.components(separatedBy: "\n")[0]) }
-        tags.append("\(tag)\n\(color)")
-        guard let data = try? PropertyListSerialization.data(fromPropertyList: tags, format: .binary, options: 0)
-        else { return false }
-        return data.withUnsafeBytes { setxattr(url.path, tagsAttr, $0.baseAddress, data.count, 0, 0) } == 0
+        Task {
+            let ok = Counter()
+            await runInBackground("正在打标签", jobs) { job in
+                if writeTag(job.0, tag: job.1, color: job.2) { ok.add() }
+            }
+            show("tag.fill", "已为 \(ok.value) 个视频添加 Finder 标签")
+        }
     }
 
     // 导出给达芬奇「文件 → 导入元数据 → 媒体池」用的 CSV：按文件名匹配片段，写入关键词 D-Log / D-Log2。
@@ -254,41 +391,42 @@ final class Store: ObservableObject {
     }
 
     func sortIntoFolders() {
-        let fm = FileManager.default
-        var moved = 0, failed = 0
-        for i in clips.indices {
-            guard let folder = clips[i].mode.folderName else { continue }
-            let src = clips[i].url
-            let parent = src.deletingLastPathComponent()
-            // 已经在对应文件夹里就跳过
-            if parent.lastPathComponent == folder { continue }
-            let dir = parent.appendingPathComponent(folder, isDirectory: true)
-            do {
-                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-                let dst = dir.appendingPathComponent(src.lastPathComponent)
-                guard !fm.fileExists(atPath: dst.path) else { failed += 1; continue }
-                try fm.moveItem(at: src, to: dst)
-                clips[i].url = dst
-                moved += 1
-                // 同名的 LRF 代理文件、SRT 字幕一起移动
-                let stem = src.deletingPathExtension()
-                for ext in sidecarExts {
-                    let side = stem.appendingPathExtension(ext)
-                    let sideDst = dir.appendingPathComponent(side.lastPathComponent)
-                    if fm.fileExists(atPath: side.path), !fm.fileExists(atPath: sideDst.path) {
-                        try? fm.moveItem(at: side, to: sideDst)
-                    }
-                }
-            } catch {
-                failed += 1
+        let jobs = clips.compactMap { c in c.mode.folderName.map { (c.id, c.url, $0) } }
+        Task {
+            let moved = Results<(UUID, URL)>()
+            let failed = Counter()
+            await runInBackground("正在整理", jobs) { job in
+                let (dst, didFail) = moveClip(job.1, into: job.2)
+                if let dst { moved.append((job.0, dst)) }
+                if didFail { failed.add() }
+            }
+            let newURLs = Dictionary(moved.items, uniquingKeysWith: { a, _ in a })
+            var updated = clips
+            for i in updated.indices { if let u = newURLs[updated[i].id] { updated[i].url = u } }
+            clips = updated
+            if failed.value > 0 {
+                show("exclamationmark.triangle.fill",
+                     "已移动 \(newURLs.count) 个，\(failed.value) 个失败（目标已存在或无权限）", warning: true)
+            } else {
+                show("checkmark.circle.fill", newURLs.isEmpty ? "视频都已在对应文件夹中" : "已整理 \(newURLs.count) 个视频")
             }
         }
-        if failed > 0 {
-            show("exclamationmark.triangle.fill", "已移动 \(moved) 个，\(failed) 个失败（目标已存在或无权限）", warning: true)
-        } else {
-            show("checkmark.circle.fill", moved > 0 ? "已整理 \(moved) 个视频" : "视频都已在对应文件夹中")
-        }
     }
+}
+
+// 后台任务里累计结果用，加锁保证线程安全
+final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    func add() { lock.lock(); n += 1; lock.unlock() }
+    var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+}
+
+final class Results<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var list: [T] = []
+    func append(_ x: T) { lock.lock(); list.append(x); lock.unlock() }
+    var items: [T] { lock.lock(); defer { lock.unlock() }; return list }
 }
 
 enum Filter: String, CaseIterable, Identifiable {
@@ -324,6 +462,7 @@ func displayFolder(_ url: URL) -> String {
 
 struct ContentView: View {
     @ObservedObject var store = Store.shared
+    @ObservedObject var updater = Updater.shared
     @State private var targeted = false
     @State private var confirmMove = false
     @State private var filter = Filter.all
@@ -351,6 +490,7 @@ struct ContentView: View {
         }
         .navigationTitle("DlogSort")
         .navigationSubtitle(subtitle)
+        .task { await updater.check(userInitiated: false) }
         .toolbar { toolbar }
         .onDrop(of: [.fileURL], isTargeted: $targeted.animation(.easeOut(duration: 0.15))) { providers in
             for p in providers {
@@ -362,6 +502,7 @@ struct ContentView: View {
         }
         .confirmationDialog("整理到 Dlog / Dlog2 文件夹？", isPresented: $confirmMove) {
             Button("移动 \(store.sortable) 个视频") { store.sortIntoFolders() }
+            Button("取消", role: .cancel) {}
         } message: {
             Text("每个视频会移到它所在目录下的 Dlog 或 Dlog2 子文件夹，同名的 .LRF 代理文件和 .SRT 字幕一起移动。未识别的视频保持不动。")
         }
@@ -369,7 +510,7 @@ struct ContentView: View {
 
     var subtitle: String {
         if store.clips.isEmpty { return "" }
-        if store.isReading { return "正在读取 \(store.count(.pending)) 个视频…" }
+        if let a = store.activity { return "\(a.label) \(a.done)/\(a.total)…" }
         return "\(store.clips.count) 个视频"
     }
 
@@ -386,11 +527,21 @@ struct ContentView: View {
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            if let update = updater.available {
+                Button { updater.showUpdate(update) } label: {
+                    Label("新版本 \(update.version)", systemImage: "arrow.down.circle.fill")
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(Color.accentColor)
+                }
+                .help("DlogSort \(update.version) 已发布，点击查看并下载")
+            }
             Button { store.openPanel() } label: { Label("添加视频", systemImage: "plus") }
                 .help("添加视频或文件夹（⌘O）")
             if !store.clips.isEmpty {
                 Button { store.clear(); selection = [] } label: { Label("清空列表", systemImage: "xmark.circle") }
                     .help("清空列表（不会删除文件）")
+                    // 打标签、整理进行中不能清空，读取中可以
+                    .disabled(store.isBusy && store.activity?.label != "正在读取")
             }
         }
     }
@@ -422,10 +573,14 @@ struct ContentView: View {
 
     var bottomBar: some View {
         HStack(spacing: 18) {
-            StatView(mode: .dlog, count: store.count(.dlog))
-            StatView(mode: .dlog2, count: store.count(.dlog2))
-            let others = store.count(.other, .unknown)
-            if others > 0 { StatView(mode: .unknown, count: others, label: "未识别") }
+            if let a = store.activity {
+                ActivityView(activity: a)
+            } else {
+                StatView(mode: .dlog, count: store.count(.dlog))
+                StatView(mode: .dlog2, count: store.count(.dlog2))
+                let others = store.count(.other, .unknown)
+                if others > 0 { StatView(mode: .unknown, count: others, label: "未识别") }
+            }
             Spacer()
             Button { store.applyTags() } label: { Label("打 Finder 标签", systemImage: "tag") }
                 .help("给每个视频加上橙色 Dlog / 紫色 Dlog2 标签，文件不移动")
@@ -436,7 +591,7 @@ struct ContentView: View {
                 .help("移到所在目录下的 Dlog / Dlog2 子文件夹")
         }
         .controlSize(.large)
-        .disabled(store.sortable == 0 || store.isReading)
+        .disabled(store.sortable == 0 || store.isBusy)
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .background(.bar)
@@ -540,6 +695,22 @@ struct ModeBadge: View {
     }
 }
 
+struct ActivityView: View {
+    let activity: Activity
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ProgressView(value: Double(activity.done), total: Double(max(activity.total, 1)))
+                .progressViewStyle(.linear)
+                .frame(width: 180)
+            Text("\(activity.label)  \(activity.done) / \(activity.total)")
+                .font(.system(size: 12.5).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .transition(.opacity)
+    }
+}
+
 struct StatView: View {
     let mode: Mode
     let count: Int
@@ -628,6 +799,91 @@ struct ToastView: View {
     }
 }
 
+// MARK: - 检查更新
+// 读取 GitHub 上最新的 Release，版本号比当前高就提示下载
+
+let releasesAPI = URL(string: "https://api.github.com/repos/Chokamin/DlogSort/releases/latest")!
+
+struct UpdateInfo: Equatable {
+    let version: String
+    let notes: String
+    let page: URL
+    let download: URL?
+}
+
+// 按数字逐段比较版本号，"1.10" 比 "1.9" 新
+func isNewer(_ a: String, than b: String) -> Bool {
+    let pa = a.split(separator: ".").map { Int($0) ?? 0 }
+    let pb = b.split(separator: ".").map { Int($0) ?? 0 }
+    for i in 0..<max(pa.count, pb.count) {
+        let x = i < pa.count ? pa[i] : 0, y = i < pb.count ? pb[i] : 0
+        if x != y { return x > y }
+    }
+    return false
+}
+
+func fetchLatestRelease() async throws -> UpdateInfo {
+    var req = URLRequest(url: releasesAPI, timeoutInterval: 15)
+    req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+    let (data, resp) = try await URLSession.shared.data(for: req)
+    guard (resp as? HTTPURLResponse)?.statusCode == 200,
+          let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let tag = json["tag_name"] as? String,
+          let page = (json["html_url"] as? String).flatMap(URL.init(string:))
+    else { throw URLError(.badServerResponse) }
+    let assets = json["assets"] as? [[String: Any]] ?? []
+    let zip = assets.first { ($0["name"] as? String)?.hasSuffix(".zip") == true }
+    return UpdateInfo(version: tag.trimmingCharacters(in: CharacterSet(charactersIn: "vV")),
+                      notes: json["body"] as? String ?? "",
+                      page: page,
+                      download: (zip?["browser_download_url"] as? String).flatMap(URL.init(string:)))
+}
+
+@MainActor
+final class Updater: ObservableObject {
+    static let shared = Updater()
+    @Published var available: UpdateInfo?
+
+    let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+
+    // 启动时静默检查：只在有新版本时让工具栏出现按钮；从菜单手动检查时每种结果都弹窗告知
+    func check(userInitiated: Bool) async {
+        do {
+            let latest = try await fetchLatestRelease()
+            if isNewer(latest.version, than: current) {
+                available = latest
+                if userInitiated { showUpdate(latest) }
+            } else if userInitiated {
+                alert("已是最新版本", "当前版本 \(current) 是最新的。")
+            }
+        } catch {
+            if userInitiated { alert("无法检查更新", "请检查网络连接后再试。\n\(error.localizedDescription)") }
+        }
+    }
+
+    func showUpdate(_ info: UpdateInfo) {
+        let a = NSAlert()
+        a.messageText = "DlogSort \(info.version) 可以更新了"
+        let notes = info.notes.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "## ", with: "")
+        a.informativeText = "当前版本 \(current)。\n\n\(notes)\n\n下载后解压，把新的 DlogSort 拖进「应用程序」替换旧版。"
+        a.addButton(withTitle: "下载新版本")
+        a.addButton(withTitle: "查看发布页")
+        a.addButton(withTitle: "稍后")
+        switch a.runModal() {
+        case .alertFirstButtonReturn: NSWorkspace.shared.open(info.download ?? info.page)
+        case .alertSecondButtonReturn: NSWorkspace.shared.open(info.page)
+        default: break
+        }
+    }
+
+    private func alert(_ title: String, _ text: String) {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.runModal()
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     // 把文件拖到 Dock 图标上
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -648,6 +904,9 @@ struct DlogSortApp: App {
                 CommandGroup(replacing: .newItem) {
                     Button("添加视频…") { Store.shared.openPanel() }
                         .keyboardShortcut("o")
+                }
+                CommandGroup(after: .appInfo) {
+                    Button("检查更新…") { Task { await Updater.shared.check(userInitiated: true) } }
                 }
             }
     }
