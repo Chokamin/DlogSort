@@ -17,6 +17,10 @@ SIG=$(Vendor/Sparkle-2.10.0/bin/sign_update --account DlogSort DlogSort.zip)
 
 python3 -I - "$APPCAST" "$VERSION" "$BUILD" "$URL" "$SIG" "$NOTES" <<'PY'
 import sys, os, email.utils
+# Sparkle 用网页视图显示说明，没有样式时列表会缩进 40px、字号偏大，这里统一成系统字体和较小的缩进
+STYLE = ("<style>:root{color-scheme:light dark}"
+         "body{margin:10px 14px;font:13px/1.55 -apple-system,'PingFang SC',sans-serif}"
+         "ul{margin:0;padding-left:1.1em}li{margin:0 0 6px}p{margin:0 0 8px}</style>")
 path, version, build, url, sig, notes = sys.argv[1:]
 if not os.path.exists(path):
     open(path, "w").write('''<?xml version="1.0" encoding="utf-8"?>
@@ -36,7 +40,7 @@ item = f'''    <item>
       <sparkle:version>{build}</sparkle:version>
       <sparkle:shortVersionString>{version}</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[{open(notes).read().strip()}]]></description>
+      <description><![CDATA[{STYLE}{open(notes).read().strip()}]]></description>
       <enclosure url="{url}" {sig} type="application/octet-stream"/>
     </item>
 '''
