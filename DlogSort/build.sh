@@ -3,8 +3,8 @@
 set -e
 cd "$(dirname "$0")"
 # 版本号：每次发布都要递增 BUILD，Sparkle 靠它判断新旧
-VERSION="${VERSION:-1.3.1}"
-BUILD="${BUILD:-5}"
+VERSION="${VERSION:-1.4}"
+BUILD="${BUILD:-6}"
 APP="${APP:-$(cd .. && pwd)/DlogSort.app}"
 # 测试更新流程时可以换成别的标识和本地更新源
 BUNDLE_ID="${BUNDLE_ID:-io.github.chokamin.dlogsort}"

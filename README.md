@@ -2,35 +2,34 @@
 
 <h1 align="center">DlogSort</h1>
 
-<p align="center">一眼分辨 DJI Pocket 4P 拍的视频是 <b>D-Log</b> 还是 <b>D-Log2</b>，并一键整理。</p>
+<p align="center">一眼分辨 DJI 视频是 <b>D-Log</b>、<b>D-Log2</b> 还是 <b>D-Log M</b>，并一键整理。</p>
 
 <p align="center"><a href="https://chokamin.github.io/DlogSort/"><b>在线使用（Windows / Mac / 手机）</b></a> · <a href="../../releases/latest"><b>下载 Mac 版</b></a></p>
 
 ---
 
-DJI Osmo Pocket 4P 有 D-Log 和 D-Log2 两种色彩模式，但导入电脑后文件名完全一样，没法直接区分。DlogSort 读取相机写进视频文件里的元数据，自动标出每段视频的模式。
+DJI Osmo Pocket 4P 有 D-Log 和 D-Log2 两种色彩模式，Osmo Action 5 Pro 等机型还有 D-Log M，但导入电脑后文件名完全一样，没法直接区分。DlogSort 读取相机写进视频文件里的元数据，自动标出每段视频的模式。
 
 ## 功能
 
 - **拖进来就识别**：把视频或整个文件夹拖进窗口（或拖到 Dock 图标上），子文件夹也会扫描
-- **列表展示**：缩略图、时长、镜头、ISO、分辨率、帧率，以及醒目的 D-Log / D-Log2 标记
-- **筛选**：全部 / D-Log / D-Log2 / 其他
-- **打 Finder 标签**：D-Log 视频加上 `Dlog` 和橙色标签，D-Log2 加上 `Dlog2` 和紫色标签，文件位置不变。颜色用的是 Finder 自带的颜色标签，在 Finder 里编辑标签也不会丢
-- **导出到达芬奇**：生成元数据 CSV，导入 DaVinci Resolve 后片段带上 `D-Log` / `D-Log2` 关键词，可自动生成智能媒体夹
-- **整理到文件夹**：移到所在目录下的 `Dlog/`、`Dlog2/` 子文件夹，同名 `.LRF` 代理文件和 `.SRT` 字幕一起移动
+- **列表展示**：缩略图、时长、镜头、ISO、分辨率、帧率，以及醒目的 D-Log / D-Log2 / D-Log M 标记
+- **筛选**：全部 / D-Log / D-Log2 / D-Log M / 其他
+- **打 Finder 标签**：D-Log 视频加上 `Dlog` 和橙色标签，D-Log2 加上 `Dlog2` 和紫色标签，D-Log M 加上 `DlogM` 和绿色标签，文件位置不变。颜色用的是 Finder 自带的颜色标签，在 Finder 里编辑标签也不会丢
+- **导出到达芬奇**：生成元数据 CSV，导入 DaVinci Resolve 后片段带上 `D-Log` / `D-Log2` / `D-Log M` 关键词，可自动生成智能媒体夹
+- **整理到文件夹**：移到所在目录下的 `Dlog/`、`Dlog2/`、`DlogM/` 子文件夹，同名 `.LRF` 代理文件和 `.SRT` 字幕一起移动
 - 双击播放，右键在 Finder 中显示，⌘O 添加文件
 - 几千个视频也不卡：后台读取，底栏显示进度
 - 自动更新：使用 [Sparkle](https://sparkle-project.org)，有新版本时弹出更新窗口，一键下载安装并重新打开；也可以从菜单「DlogSort → 检查更新…」手动检查
 
 ## 原理
 
-不分析画面，而是直接读取 DJI 写入 MP4 元数据的字段：
+不分析画面，而是直接读取 DJI 写入视频的色彩模式，结果是确定的，不会误判：
 
-```
-com.dji.camera.ColorGammaSxS = D-Log | D-Log2
-```
+- **Pocket 4P**：MP4 元数据里有文字字段 `com.dji.camera.ColorGammaSxS = D-Log | D-Log2`
+- **Osmo Action 5 Pro 等机型**：没有这个字段，色彩模式记在 DJI 的 `djmd` 元数据轨道里（protobuf，路径 `stream_meta.color_mode`），是一个编号：2 = D-Log，19 = D-Log M，22 = D-Log2。其他编号（普通、D-Cinelike、HLG 等）会显示名称，但不参与整理
 
-所以结果是确定的，不会误判。用 `ffprobe` 也能看到这个字段：
+Pocket 4P 的字段用 `ffprobe` 也能看到：
 
 ```bash
 ffprobe -v error -show_entries format_tags=com.dji.camera.ColorGammaSxS -of default=nw=1 视频.MP4
@@ -43,8 +42,8 @@ ffprobe -v error -show_entries format_tags=com.dji.camera.ColorGammaSxS -of defa
 1. 把视频导入媒体池
 2. **文件 → 导入元数据至 → 媒体池**，选中 CSV
 3. 勾选「用文件名称匹配」，**取消勾选**「使用片段起始和终止时间码匹配」，点确定
-4. 片段会带上关键词 `D-Log` 或 `D-Log2`，在元数据面板的 **Shot & Scene** 组里查看，或在媒体池列表视图中显示「关键词」列
-5. 在 **偏好设置 → 用户 → 剪辑 → 自动智能媒体夹** 勾选「关键词」，智能媒体夹里会自动出现 D-Log 和 D-Log2，方便分别套用 LUT
+4. 片段会带上关键词 `D-Log`、`D-Log2` 或 `D-Log M`，在元数据面板的 **Shot & Scene** 组里查看，或在媒体池列表视图中显示「关键词」列
+5. 在 **偏好设置 → 用户 → 剪辑 → 自动智能媒体夹** 勾选「关键词」，智能媒体夹里会按色彩模式自动分类，方便分别套用 LUT
 
 已在 DaVinci Resolve 21.1.2 上用 131 个 Pocket 4P 片段验证。
 
@@ -108,6 +107,6 @@ Mac 用户也可以试试「打 Finder 标签」，再在达芬奇 **偏好设�
 
 ## 适用范围
 
-- 已验证：DJI Osmo Pocket 4P 的 D-Log 和 D-Log2
-- 其他大疆设备如果写了同一个字段，会显示出模式，但只有 D-Log / D-Log2 会被整理
+- 已验证：DJI Osmo Pocket 4P 的 D-Log 和 D-Log2，Osmo Action 5 Pro 的 D-Log M
+- 其他使用同样元数据格式的大疆机型（如 Osmo Action、Osmo Pocket 系列）大概率也能识别，但还没实测；只有 D-Log / D-Log2 / D-Log M 会被整理
 - 其他品牌（索尼 S-Log、Apple Log 等）的元数据格式不同，会显示为「未识别」

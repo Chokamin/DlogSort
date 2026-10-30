@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DlogSort</title>
-<meta name="description" content="一眼分辨 DJI Pocket 4P 视频是 D-Log 还是 D-Log2。在浏览器本地读取，视频不会上传。">
+<meta name="description" content="一眼分辨 DJI 视频是 D-Log、D-Log2 还是 D-Log M。在浏览器本地读取，视频不会上传。">
 <link rel="icon" href="icon.png">
 <style>
 :root {
@@ -21,6 +21,8 @@
   --dlog-bg: rgba(255, 122, 51, .12);
   --dlog2: #7552f5;
   --dlog2-bg: rgba(139, 108, 255, .13);
+  --dlogm: #0d9488;
+  --dlogm-bg: rgba(20, 184, 166, .13);
   --other: #d93a3f;
   --other-bg: rgba(229, 72, 77, .1);
   --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 24px rgba(0, 0, 0, .06);
@@ -40,6 +42,8 @@
     --dlog-bg: rgba(255, 122, 51, .15);
     --dlog2: #a08bff;
     --dlog2-bg: rgba(139, 108, 255, .17);
+    --dlogm: #2dd4bf;
+    --dlogm-bg: rgba(20, 184, 166, .17);
     --other: #ff6b6f;
     --other-bg: rgba(229, 72, 77, .14);
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25);
@@ -50,6 +54,7 @@
   --bg: #161618; --surface: #1e1e21; --surface-2: #2a2a2e; --text: #f5f5f7; --text-2: #a1a1a6;
   --text-3: #6e6e73; --line: rgba(255, 255, 255, .08); --accent: #2f8cff; --dlog: #ff8a4c;
   --dlog-bg: rgba(255, 122, 51, .15); --dlog2: #a08bff; --dlog2-bg: rgba(139, 108, 255, .17);
+  --dlogm: #2dd4bf; --dlogm-bg: rgba(20, 184, 166, .17);
   --other: #ff6b6f; --other-bg: rgba(229, 72, 77, .14);
   --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .25); --bar: rgba(30, 30, 33, .8);
 }
@@ -182,6 +187,7 @@ main { flex: 1; width: 100%; max-width: 1040px; margin: 0 auto; padding: 28px 24
 .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .badge.dlog { color: var(--dlog); background: var(--dlog-bg); }
 .badge.dlog2 { color: var(--dlog2); background: var(--dlog2-bg); }
+.badge.dlogm { color: var(--dlogm); background: var(--dlogm-bg); }
 .badge.other, .badge.unknown { color: var(--other); background: var(--other-bg); }
 .badge.pending { color: var(--text-2); background: var(--surface-2); box-shadow: none; }
 .badge.pending::before { width: 10px; height: 10px; background: none; border: 1.5px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; }
@@ -274,7 +280,7 @@ footer p { margin: 4px 0; }
 <header>
   <div class="header-inner">
     <span class="brand">DlogSort</span>
-    <span class="brand-sub">分辨 DJI 视频是 D-Log 还是 D-Log2</span>
+    <span class="brand-sub">分辨 DJI 视频是 D-Log、D-Log2 还是 D-Log M</span>
     <nav>
       <a class="link" href="https://github.com/Chokamin/DlogSort/releases/latest">Mac 版</a>
       <a class="link" href="https://github.com/Chokamin/DlogSort">GitHub</a>
@@ -285,7 +291,7 @@ footer p { margin: 4px 0; }
 <main>
   <section id="empty" class="drop">
     <h1>拖入 DJI 视频或文件夹</h1>
-    <p>自动识别每段视频是 D-Log 还是 D-Log2</p>
+    <p>自动识别每段视频是 D-Log、D-Log2 还是 D-Log M</p>
     <div class="actions">
       <button class="btn primary large" data-pick="files">选择视频…</button>
       <button class="btn large" data-pick="folder">选择文件夹…</button>
@@ -305,6 +311,7 @@ footer p { margin: 4px 0; }
         <button data-f="all" class="on">全部</button>
         <button data-f="dlog">D-Log</button>
         <button data-f="dlog2">D-Log2</button>
+        <button data-f="dlogm">D-Log M</button>
         <button data-f="other">其他</button>
       </div>
       <button class="icon-btn" data-pick="files" title="添加视频">
@@ -319,14 +326,15 @@ footer p { margin: 4px 0; }
 </main>
 
 <footer>
-  <p>读取 DJI 写入视频元数据的 <code>com.dji.camera.ColorGammaSxS</code> 字段，结果确定，不靠画面猜测。</p>
-  <p>已验证 DJI Osmo Pocket 4P · <a href="https://github.com/Chokamin/DlogSort">开源</a></p>
+  <p>读取 DJI 写入视频的色彩模式元数据，结果确定，不靠画面猜测。</p>
+  <p>已验证 DJI Osmo Pocket 4P（D-Log / D-Log2）和 Osmo Action 5 Pro（D-Log M） · <a href="https://github.com/Chokamin/DlogSort">开源</a></p>
 </footer>
 
 <div class="bottom hidden" id="bottom">
   <div class="bottom-inner">
     <span class="stat"><i style="background:var(--dlog)"></i><b id="n-dlog">0</b><span>D-Log</span></span>
     <span class="stat"><i style="background:var(--dlog2)"></i><b id="n-dlog2">0</b><span>D-Log2</span></span>
+    <span class="stat hidden" id="stat-dlogm"><i style="background:var(--dlogm)"></i><b id="n-dlogm">0</b><span>D-Log M</span></span>
     <span class="stat hidden" id="stat-other"><i style="background:var(--other)"></i><b id="n-other">0</b><span>未识别</span></span>
     <span class="spacer"></span>
     <div class="btns">
@@ -336,7 +344,7 @@ footer p { margin: 4px 0; }
           导出
         </button>
         <div class="menu" id="export-menu">
-          <button data-export="resolve">达芬奇元数据<small>导入后片段带上 D-Log / D-Log2 关键词，自动生成智能媒体夹</small></button>
+          <button data-export="resolve">达芬奇元数据<small>导入后片段带上 D-Log / D-Log2 / D-Log M 关键词，自动生成智能媒体夹</small></button>
           <button data-export="list">表格列表<small>所有视频的模式、镜头、ISO、分辨率等，可用 Excel 打开</small></button>
           <div class="hint">达芬奇里：文件 → 导入元数据至 → 媒体池，选中 CSV；勾选「用文件名称匹配」，取消勾选「使用片段起始和终止时间码匹配」。关键词在元数据面板的「Shot &amp; Scene」组里；在偏好设置 → 用户 → 剪辑 →「自动智能媒体夹」勾选「关键词」可自动分类。</div>
         </div>
@@ -349,7 +357,7 @@ footer p { margin: 4px 0; }
         <div class="menu" id="sort-menu">
           <button data-script="bat">Windows 整理脚本<small>下载 .bat，放到视频所在位置后双击运行</small></button>
           <button data-script="sh">macOS / Linux 整理脚本<small>下载 .sh，放到视频所在位置后用 sh 运行</small></button>
-          <div class="hint">网页无法直接移动你电脑上的文件，所以生成一个脚本来完成。视频会移到各自所在目录下的 Dlog / Dlog2 子文件夹，同名 .LRF / .SRT 一起移动。</div>
+          <div class="hint">网页无法直接移动你电脑上的文件，所以生成一个脚本来完成。视频会移到各自所在目录下的 Dlog / Dlog2 / DlogM 子文件夹，同名 .LRF / .SRT 一起移动。</div>
         </div>
       </div>
     </div>
@@ -502,6 +510,66 @@ function findThumbnail(buf, moov, dv) {
   return new Blob([bytes.subarray(s, next < 0 ? bytes.length : next)], { type: "image/jpeg" });
 }
 
+// Osmo Action 5 Pro 等机型没有 ColorGammaSxS，色彩模式只记在 djmd 轨道的 protobuf 里：
+// ProductMeta.stream_meta(2) → color_mode(4) → color_mode(1)，编号见 DJI dvtm_library.proto 的 ColorModeType
+const COLOR_MODE_NAMES = { 0: "普通", 1: "D-Cinelike", 2: "D-Log", 9: "HLG", 19: "D-Log M", 22: "D-Log2" };
+
+async function djmdColorMode(file, dv, moov) {
+  for (const trak of boxes(dv, moov.body, moov.end)) {
+    if (trak.type !== "trak") continue;
+    const mdia = child(dv, trak, "mdia");
+    const stbl = mdia && child(dv, child(dv, mdia, "minf") || mdia, "stbl");
+    const stsd = stbl && child(dv, stbl, "stsd");
+    if (!stsd || fourcc(dv, stsd.body + 12) !== "djmd") continue;
+    const stsz = child(dv, stbl, "stsz"), stco = child(dv, stbl, "stco"), co64 = child(dv, stbl, "co64");
+    if (!stsz || !(stco || co64)) return null;
+    const size = dv.getUint32(stsz.body + 4) || dv.getUint32(stsz.body + 12);
+    const offset = stco ? dv.getUint32(stco.body + 8) : Number(dv.getBigUint64(co64.body + 8));
+    if (!size || size > 1 << 20) return null;
+    const sample = new Uint8Array(await file.slice(offset, offset + size).arrayBuffer());
+    return protobufVarint(sample, [2, 4, 1]);
+  }
+  return null;
+}
+
+// 沿字段编号路径往下找，前面几级是嵌套消息，最后一级是整数
+function protobufVarint(b, path) {
+  let lo = 0, hi = b.length;
+  for (let level = 0; level < path.length; level++) {
+    const last = level === path.length - 1;
+    let p = lo, found = false;
+    const varint = () => {
+      let v = 0, mul = 1;
+      while (p < hi) {
+        const x = b[p++];
+        v += (x & 0x7f) * mul;
+        if (x < 0x80) return v;
+        mul *= 128;
+      }
+      return null;
+    };
+    while (p < hi && !found) {
+      const key = varint();
+      if (key === null) return null;
+      const num = Math.floor(key / 8), wire = key % 8;
+      if (wire === 0) {
+        const v = varint();
+        if (v === null) return null;
+        if (num === path[level] && last) return v;
+      } else if (wire === 1) p += 8;
+      else if (wire === 5) p += 4;
+      else if (wire === 2) {
+        const n = varint();
+        if (n === null || p + n > hi) return null;
+        if (num === path[level] && !last) { lo = p; hi = p + n; found = true; }
+        p += n;
+      } else return null;
+    }
+    if (!found) return null;
+  }
+  return null;
+}
+
 async function analyze(file) {
   const loc = await findTopBox(file, "moov");
   if (!loc || loc.size > MAX_MOOV) return { mode: "unknown" };
@@ -510,8 +578,14 @@ async function analyze(file) {
   const moov = { type: "moov", start: 0, end: buf.byteLength, body: 8 };
   if (dv.getUint32(0) === 1) moov.body = 16;
   const tags = readMdtaTags(dv, moov);
-  const raw = tags[GAMMA_KEY] || "";
-  const mode = raw.toLowerCase() === "d-log" ? "dlog" : raw.toLowerCase() === "d-log2" ? "dlog2" : raw ? "other" : "unknown";
+  let raw = tags[GAMMA_KEY] || "";
+  if (!raw) {
+    const code = await djmdColorMode(file, dv, moov);
+    if (code !== null) raw = COLOR_MODE_NAMES[code] || `色彩模式 ${code}`;
+  }
+  // 去掉空格和连字符再比较，兼容 "D-Log M" / "D-LogM" 之类的写法
+  const key = raw.toLowerCase().replace(/[\s_-]/g, "");
+  const mode = { dlog: "dlog", dlog2: "dlog2", dlogm: "dlogm" }[key] || (raw ? "other" : "unknown");
   const thumb = findThumbnail(buf, moov, dv);
   return {
     mode, raw,
@@ -529,8 +603,8 @@ const clips = [];
 let filter = "all";
 let uid = 0;
 
-const MODE_LABEL = { dlog: "D-Log", dlog2: "D-Log2", unknown: "未识别", pending: "读取中" };
-const FOLDER = { dlog: "Dlog", dlog2: "Dlog2" };
+const MODE_LABEL = { dlog: "D-Log", dlog2: "D-Log2", dlogm: "D-Log M", unknown: "未识别", pending: "读取中" };
+const FOLDER = { dlog: "Dlog", dlog2: "Dlog2", dlogm: "DlogM" };
 const isVideo = (name) => /\.(mp4|mov)$/i.test(name);
 
 function esc(s) {
@@ -585,16 +659,18 @@ function render() {
   $("status").textContent = pending ? `正在读取 ${pending} 个…` : "";
   $("n-dlog").textContent = count("dlog");
   $("n-dlog2").textContent = count("dlog2");
+  $("n-dlogm").textContent = count("dlogm");
+  $("stat-dlogm").classList.toggle("hidden", count("dlogm") === 0);
   $("n-other").textContent = others;
   $("stat-other").classList.toggle("hidden", others === 0);
 
   const shown = clips.filter(matches);
-  const label = { dlog: "D-Log ", dlog2: "D-Log2 ", other: "其他" }[filter] || "";
+  const label = { dlog: "D-Log ", dlog2: "D-Log2 ", dlogm: "D-Log M ", other: "其他" }[filter] || "";
   $("list").innerHTML = shown.length
     ? shown.map(rowHTML).join("")
     : `<div class="empty-filter">没有${label}视频</div>`;
 
-  const ready = !pending && count("dlog", "dlog2") > 0;
+  const ready = !pending && count("dlog", "dlog2", "dlogm") > 0;
   $("sort-btn").disabled = !ready;
   $("export-btn").disabled = !!pending;
 }
@@ -798,7 +874,7 @@ function shScript(list) {
   const q = (p) => `'${p.replace(/'/g, `'\\''`)}'`;
   return [
     "#!/bin/sh",
-    "# DlogSort 整理脚本：把视频移到所在目录下的 Dlog / Dlog2 子文件夹",
+    "# DlogSort 整理脚本：把视频移到所在目录下的 Dlog / Dlog2 / DlogM 子文件夹",
     'cd "$(dirname "$0")" || exit 1',
     "sort_clip() {",
     '  src=$1; dest=$2',

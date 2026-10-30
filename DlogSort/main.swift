@@ -4,7 +4,8 @@ import Sparkle
 import SwiftUI
 import UniformTypeIdentifiers
 
-// DJI 在 MP4 的 moov/meta 里写入 mdta 键 com.dji.camera.ColorGammaSxS，值为 "D-Log" 或 "D-Log2"
+// Pocket 4P 在 MP4 的 moov/meta 里写入 mdta 键 com.dji.camera.ColorGammaSxS，值为 "D-Log" 或 "D-Log2"；
+// Osmo Action 5 Pro 等机型没有这个键，色彩模式只记在 djmd 轨道里（见 djiColorModeCode）
 let gammaKey = "mdta/com.dji.camera.ColorGammaSxS"
 let lensKey = "mdta/com.dji.camera.LensType"
 let isoKey = "mdta/com.dji.camera.ExposureIndexAsa"
@@ -22,6 +23,7 @@ extension Color {
 enum Mode: String {
     case dlog = "D-Log"
     case dlog2 = "D-Log2"
+    case dlogM = "D-Log M"
     case other = "其他"
     case unknown = "未识别"
     case pending = "读取中"
@@ -31,17 +33,19 @@ enum Mode: String {
         switch self {
         case .dlog: return Color(hex: 0xFF7A33)
         case .dlog2: return Color(hex: 0x8B6CFF)
+        case .dlogM: return Color(hex: 0x14B8A6)
         case .other: return .gray
         case .unknown: return Color(hex: 0xE5484D)
         case .pending: return .secondary
         }
     }
 
-    // Finder 标签颜色编号：7 橙色，3 紫色
+    // Finder 标签颜色编号：7 橙色，3 紫色，2 绿色
     var tagColor: Int? {
         switch self {
         case .dlog: return 7
         case .dlog2: return 3
+        case .dlogM: return 2
         default: return nil
         }
     }
@@ -50,6 +54,7 @@ enum Mode: String {
         switch self {
         case .dlog: return "Dlog"
         case .dlog2: return "Dlog2"
+        case .dlogM: return "DlogM"
         default: return nil
         }
     }
@@ -114,9 +119,14 @@ func loadClip(_ url: URL) async -> (URL, ClipInfo, CGImage?) {
         }
     }
     info.rawGamma = gamma.trimmingCharacters(in: .whitespaces)
-    switch info.rawGamma.lowercased() {
-    case "d-log": info.mode = .dlog
-    case "d-log2": info.mode = .dlog2
+    if info.rawGamma.isEmpty, let code = djiColorModeCode(url) {
+        info.rawGamma = colorModeNames[code] ?? "色彩模式 \(code)"
+    }
+    // 去掉空格和连字符再比较，兼容 "D-Log M" / "D-LogM" 之类的写法
+    switch info.rawGamma.lowercased().filter({ $0 != " " && $0 != "-" && $0 != "_" }) {
+    case "dlog": info.mode = .dlog
+    case "dlog2": info.mode = .dlog2
+    case "dlogm": info.mode = .dlogM
     case "": info.mode = .unknown
     default: info.mode = .other
     }
@@ -128,6 +138,124 @@ func loadClip(_ url: URL) async -> (URL, ClipInfo, CGImage?) {
     var thumb = (cover ?? small).flatMap(decodeThumbnail)
     if thumb == nil { thumb = await makeThumbnail(asset) }
     return (url, info, thumb)
+}
+
+// MARK: - DJI djmd 元数据轨道
+// djmd 轨道每个样本是一段 protobuf（DJI 的 dvtm 格式）。色彩模式在
+// ProductMeta.stream_meta(2) → color_mode(4) → color_mode(1)，编号定义见 DJI dvtm_library.proto 的
+// ColorModeType（如 2 = D-Log，19 = D-Log M）；Pocket 4P 的 D-Log2 记为 22。
+// 已用 Osmo Action 5 Pro 的 D-Log M 素材验证
+
+let colorModeNames: [Int: String] = [0: "普通", 1: "D-Cinelike", 2: "D-Log", 9: "HLG", 19: "D-Log M", 22: "D-Log2"]
+
+func djiColorModeCode(_ url: URL) -> Int? {
+    guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? fh.close() }
+    guard let moov = readTopBox(fh, "moov"), let sample = firstDjmdSample(fh, moov) else { return nil }
+    return protobufVarint(sample, path: [2, 4, 1])
+}
+
+private func be(_ b: [UInt8], _ p: Int, _ n: Int) -> Int {
+    var v = 0
+    for i in 0..<n { v = v << 8 | Int(b[p + i]) }
+    return v
+}
+
+private func boxes(_ b: [UInt8], _ start: Int, _ end: Int) -> [(type: String, end: Int, body: Int)] {
+    var out: [(String, Int, Int)] = []
+    var p = start
+    while p + 8 <= end {
+        var size = be(b, p, 4), hdr = 8
+        if size == 1, p + 16 <= end { size = be(b, p + 8, 8); hdr = 16 } else if size == 0 { size = end - p }
+        guard size >= hdr, p + size <= end else { break }
+        out.append((String(decoding: b[p + 4..<p + 8], as: UTF8.self), p + size, p + hdr))
+        p += size
+    }
+    return out
+}
+
+private func child(_ b: [UInt8], _ box: (type: String, end: Int, body: Int)?, _ type: String) -> (type: String, end: Int, body: Int)? {
+    guard let box else { return nil }
+    return boxes(b, box.body, box.end).first { $0.type == type }
+}
+
+// 只读文件头部的各个盒子标题，找到 moov 后整块读出来（DJI 把 moov 放在文件末尾，几百 KB）
+private func readTopBox(_ fh: FileHandle, _ type: String) -> [UInt8]? {
+    guard let end = try? fh.seekToEnd() else { return nil }
+    var pos: UInt64 = 0
+    while pos + 8 <= end {
+        try? fh.seek(toOffset: pos)
+        guard let h = try? fh.read(upToCount: 16), h.count >= 8 else { return nil }
+        let hb = [UInt8](h)
+        var size = UInt64(be(hb, 0, 4))
+        if size == 1, hb.count == 16 { size = UInt64(be(hb, 8, 8)) } else if size == 0 { size = end - pos }
+        guard size >= 8 else { return nil }
+        if String(decoding: hb[4..<8], as: UTF8.self) == type {
+            guard size <= 128 << 20 else { return nil }
+            try? fh.seek(toOffset: pos)
+            return (try? fh.read(upToCount: Int(size))).map { [UInt8]($0) }
+        }
+        pos += size
+    }
+    return nil
+}
+
+private func firstDjmdSample(_ fh: FileHandle, _ moov: [UInt8]) -> [UInt8]? {
+    let root = (type: "moov", end: moov.count, body: moov.count >= 16 && be(moov, 0, 4) == 1 ? 16 : 8)
+    for trak in boxes(moov, root.body, root.end) where trak.type == "trak" {
+        guard let stbl = child(moov, child(moov, child(moov, trak, "mdia"), "minf"), "stbl"),
+              let stsd = child(moov, stbl, "stsd"), stsd.body + 16 <= stsd.end,
+              String(decoding: moov[stsd.body + 12..<stsd.body + 16], as: UTF8.self) == "djmd",
+              let stsz = child(moov, stbl, "stsz") else { continue }
+        let fixed = be(moov, stsz.body + 4, 4)
+        let size = fixed > 0 ? fixed : be(moov, stsz.body + 12, 4)
+        let offset: Int
+        if let stco = child(moov, stbl, "stco") { offset = be(moov, stco.body + 8, 4) }
+        else if let co64 = child(moov, stbl, "co64") { offset = be(moov, co64.body + 8, 8) }
+        else { continue }
+        guard size > 0, size <= 1 << 20 else { return nil }
+        try? fh.seek(toOffset: UInt64(offset))
+        return (try? fh.read(upToCount: size)).map { [UInt8]($0) }
+    }
+    return nil
+}
+
+// 沿字段编号路径往下找，前面几级是嵌套消息，最后一级是整数
+private func protobufVarint(_ b: [UInt8], path: [Int]) -> Int? {
+    var lo = 0, hi = b.count
+    for (level, field) in path.enumerated() {
+        let last = level == path.count - 1
+        var p = lo, found = false
+        func varint() -> Int? {
+            var v = 0, shift = 0
+            while p < hi, shift < 64 {
+                let x = b[p]; p += 1
+                v |= Int(x & 0x7F) << shift
+                if x < 0x80 { return v }
+                shift += 7
+            }
+            return nil
+        }
+        while p < hi {
+            guard let key = varint() else { return nil }
+            let num = key >> 3, wire = key & 7
+            switch wire {
+            case 0:
+                guard let v = varint() else { return nil }
+                if num == field && last { return v }
+            case 1: p += 8
+            case 5: p += 4
+            case 2:
+                guard let n = varint(), p + n <= hi else { return nil }
+                if num == field && !last { lo = p; hi = p + n; found = true }
+                p += n
+            default: return nil
+            }
+            if found { break }
+        }
+        if !found { return nil }
+    }
+    return nil
 }
 
 func decodeThumbnail(_ data: Data) -> CGImage? {
@@ -167,7 +295,7 @@ func finderColorTagName(_ color: Int) -> String? {
     guard fm.createFile(atPath: probe.path, contents: nil) else { return nil }
     defer { try? fm.removeItem(at: probe) }
     let favorites = CFPreferencesCopyAppValue("FavoriteTagNames" as CFString, "com.apple.finder" as CFString) as? [String] ?? []
-    let builtin = color == 7 ? ["橙色", "Orange"] : ["紫色", "Purple"]
+    let builtin = [7: ["橙色", "Orange"], 3: ["紫色", "Purple"], 2: ["绿色", "Green"]][color] ?? []
     for name in favorites + NSWorkspace.shared.fileLabels + builtin where !name.isEmpty {
         try? (probe as NSURL).setResourceValue([name], forKey: .tagNamesKey)
         if rawTags(probe) == ["\(name)\n\(color)"] { return name }
@@ -175,17 +303,17 @@ func finderColorTagName(_ color: Int) -> String? {
     return nil
 }
 
-// 保留文件原有的其他标签，去掉旧的 Dlog / Dlog2，再加上名称标签和颜色标签
+// 保留文件原有的其他标签，去掉旧的 Dlog / Dlog2 / DlogM，再加上名称标签和颜色标签
 func writeTag(_ url: URL, tag: String, colorTag: String?) -> Bool {
     var names = rawTags(url).map { $0.components(separatedBy: "\n")[0] }
-    names.removeAll { $0 == "Dlog" || $0 == "Dlog2" }
+    names.removeAll { ["Dlog", "Dlog2", "DlogM"].contains($0) }
     names.append(tag)
     if let colorTag, !names.contains(colorTag) { names.append(colorTag) }
     // URLResourceValues.tagNames 的 setter 要 macOS 26，用 NSURL 的写法兼容旧系统
     return (try? (url as NSURL).setResourceValue(names, forKey: .tagNamesKey)) != nil
 }
 
-// 移到所在目录下的 Dlog / Dlog2 子文件夹，返回移动成功的新位置
+// 移到所在目录下的 Dlog / Dlog2 / DlogM 子文件夹，返回移动成功的新位置
 func moveClip(_ src: URL, into folder: String) -> (URL?, failed: Bool) {
     let fm = FileManager.default
     let parent = src.deletingLastPathComponent()
@@ -343,7 +471,7 @@ final class Store: ObservableObject {
 
     func count(_ modes: Mode...) -> Int { clips.filter { modes.contains($0.mode) }.count }
 
-    var sortable: Int { count(.dlog, .dlog2) }
+    var sortable: Int { count(.dlog, .dlog2, .dlogM) }
     var isBusy: Bool { activity != nil }
 
     // 在后台逐个处理文件，每处理约 1% 更新一次进度
@@ -365,7 +493,7 @@ final class Store: ObservableObject {
     }
 
     func applyTags() {
-        let colorTags = [7: finderColorTagName(7), 3: finderColorTagName(3)]
+        let colorTags = [7: finderColorTagName(7), 3: finderColorTagName(3), 2: finderColorTagName(2)]
         let jobs = clips.compactMap { c -> (URL, String, String?)? in
             guard let tag = c.mode.folderName, let color = c.mode.tagColor else { return nil }
             return (c.url, tag, colorTags[color] ?? nil)
@@ -379,7 +507,7 @@ final class Store: ObservableObject {
         }
     }
 
-    // 导出给达芬奇「文件 → 导入元数据 → 媒体池」用的 CSV：按文件名匹配片段，写入关键词 D-Log / D-Log2。
+    // 导出给达芬奇「文件 → 导入元数据 → 媒体池」用的 CSV：按文件名匹配片段，写入关键词 D-Log / D-Log2 / D-Log M。
     // 列名必须和达芬奇的元数据字段名一致；不能带 BOM，否则第一列表头匹配不上
     func exportResolveCSV() {
         let rows = clips.filter { $0.mode.folderName != nil }
@@ -405,8 +533,8 @@ final class Store: ObservableObject {
         1. 把这些视频导入媒体池
         2. 选择「文件 → 导入元数据至 → 媒体池」，选中这个 CSV
         3. 勾选「用文件名称匹配」，取消勾选「使用片段起始和终止时间码匹配」，点确定
-        4. 片段会带上关键词 D-Log 或 D-Log2：在元数据面板的「Shot & Scene」组里查看，或在媒体池列表视图中显示「关键词」列
-        5. 在偏好设置 → 用户 → 剪辑 →「自动智能媒体夹」里勾选「关键词」，媒体池的智能媒体夹里就会出现 D-Log 和 D-Log2
+        4. 片段会带上关键词 D-Log、D-Log2 或 D-Log M：在元数据面板的「Shot & Scene」组里查看，或在媒体池列表视图中显示「关键词」列
+        5. 在偏好设置 → 用户 → 剪辑 →「自动智能媒体夹」里勾选「关键词」，媒体池的智能媒体夹里就会按色彩模式自动分类
         """
         alert.addButton(withTitle: "好")
         alert.addButton(withTitle: "在 Finder 中显示")
@@ -455,7 +583,7 @@ final class Results<T>: @unchecked Sendable {
 }
 
 enum Filter: String, CaseIterable, Identifiable {
-    case all = "全部", dlog = "D-Log", dlog2 = "D-Log2", other = "其他"
+    case all = "全部", dlog = "D-Log", dlog2 = "D-Log2", dlogM = "D-Log M", other = "其他"
     var id: Self { self }
 
     func matches(_ c: Clip) -> Bool {
@@ -463,6 +591,7 @@ enum Filter: String, CaseIterable, Identifiable {
         case .all: return true
         case .dlog: return c.mode == .dlog
         case .dlog2: return c.mode == .dlog2
+        case .dlogM: return c.mode == .dlogM
         case .other: return c.mode == .other || c.mode == .unknown
         }
     }
@@ -523,11 +652,11 @@ struct ContentView: View {
             }
             return true
         }
-        .confirmationDialog("整理到 Dlog / Dlog2 文件夹？", isPresented: $confirmMove) {
+        .confirmationDialog("按色彩模式整理到文件夹？", isPresented: $confirmMove) {
             Button("移动 \(store.sortable) 个视频") { store.sortIntoFolders() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("每个视频会移到它所在目录下的 Dlog 或 Dlog2 子文件夹，同名的 .LRF 代理文件和 .SRT 字幕一起移动。未识别的视频保持不动。")
+            Text("每个视频会移到它所在目录下的 Dlog、Dlog2 或 DlogM 子文件夹，同名的 .LRF 代理文件和 .SRT 字幕一起移动。其他模式和未识别的视频保持不动。")
         }
     }
 
@@ -546,7 +675,7 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 280)
+                .frame(width: 360)
             }
         }
         ToolbarItemGroup(placement: .primaryAction) {
@@ -593,17 +722,19 @@ struct ContentView: View {
             } else {
                 StatView(mode: .dlog, count: store.count(.dlog))
                 StatView(mode: .dlog2, count: store.count(.dlog2))
+                let dlogM = store.count(.dlogM)
+                if dlogM > 0 { StatView(mode: .dlogM, count: dlogM) }
                 let others = store.count(.other, .unknown)
                 if others > 0 { StatView(mode: .unknown, count: others, label: "未识别") }
             }
             Spacer()
             Button { store.applyTags() } label: { Label("打 Finder 标签", systemImage: "tag") }
-                .help("给 D-Log 视频加上 Dlog 和橙色标签、D-Log2 加上 Dlog2 和紫色标签，文件不移动")
+                .help("D-Log 加上 Dlog 和橙色标签，D-Log2 加上 Dlog2 和紫色标签，D-Log M 加上 DlogM 和绿色标签，文件不移动")
             Button { store.exportResolveCSV() } label: { Label("导出到达芬奇", systemImage: "square.and.arrow.up") }
-                .help("导出元数据 CSV，在达芬奇里导入后片段会带上 D-Log / D-Log2 关键词")
+                .help("导出元数据 CSV，在达芬奇里导入后片段会带上 D-Log / D-Log2 / D-Log M 关键词")
             Button { confirmMove = true } label: { Label("整理到文件夹", systemImage: "folder.badge.plus") }
                 .buttonStyle(.borderedProminent)
-                .help("移到所在目录下的 Dlog / Dlog2 子文件夹")
+                .help("移到所在目录下的 Dlog / Dlog2 / DlogM 子文件夹")
         }
         .controlSize(.large)
         .disabled(store.sortable == 0 || store.isBusy)
@@ -659,9 +790,12 @@ struct Thumbnail: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             if let image {
+                // 先裁成固定尺寸，4:3 的画面（如 Action 5 Pro）才不会把右下角的时长挤出去
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    .frame(width: 96, height: 54)
+                    .clipped()
                     .transition(.opacity)
             } else {
                 Rectangle().fill(.quaternary)
@@ -754,7 +888,7 @@ struct EmptyDropZone: View {
             VStack(spacing: 7) {
                 Text(targeted ? "松开以添加" : "拖入 DJI 视频或文件夹")
                     .font(.system(size: 22, weight: .semibold))
-                Text("自动识别每段视频是 D-Log 还是 D-Log2")
+                Text("自动识别每段视频是 D-Log、D-Log2 还是 D-Log M")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
             }
