@@ -145,21 +145,44 @@ func makeThumbnail(_ asset: AVAsset) async -> CGImage? {
     return try? await gen.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
 }
 
-// 标签存在扩展属性里，是一个字符串数组，每项为 "名称\n颜色编号"。
-// 直接读写它才能带上颜色（达芬奇「将 Finder 标签导入为关键词」读的是颜色标签），并保留文件原有的其他标签
-func writeTag(_ url: URL, tag: String, color: Int) -> Bool {
-    var tags: [String] = []
+// Finder 只认它自己登记过颜色的标签。以前直接往文件里写「Dlog + 橙色编号」，
+// 一旦在 Finder 里打开标签编辑器，Finder 会按自己的登记重写，没登记颜色的 Dlog 就变回无色。
+// 现在名称标签（Dlog / Dlog2）不带颜色，颜色交给 Finder 内置的颜色标签（中文系统叫「橙色」「紫色」，
+// 英文叫 Orange / Purple，用户也可能改过名），并全部通过系统标签接口写入，颜色由系统按 Finder 的登记分配
+
+// 读文件扩展属性里的原始标签，每项为 "名称\n颜色编号"
+func rawTags(_ url: URL) -> [String] {
     let size = getxattr(url.path, tagsAttr, nil, 0, 0, 0)
-    if size > 0 {
-        var data = Data(count: size)
-        _ = data.withUnsafeMutableBytes { getxattr(url.path, tagsAttr, $0.baseAddress, size, 0, 0) }
-        tags = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String] ?? []
+    guard size > 0 else { return [] }
+    var data = Data(count: size)
+    _ = data.withUnsafeMutableBytes { getxattr(url.path, tagsAttr, $0.baseAddress, size, 0, 0) }
+    return (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String] ?? []
+}
+
+// 找出这台 Mac 上颜色编号为 color 的标签名：把候选名写到临时文件上，看系统分配给它的颜色
+@MainActor
+func finderColorTagName(_ color: Int) -> String? {
+    let fm = FileManager.default
+    let probe = fm.temporaryDirectory.appendingPathComponent("DlogSort-tag-\(UUID().uuidString)")
+    guard fm.createFile(atPath: probe.path, contents: nil) else { return nil }
+    defer { try? fm.removeItem(at: probe) }
+    let favorites = CFPreferencesCopyAppValue("FavoriteTagNames" as CFString, "com.apple.finder" as CFString) as? [String] ?? []
+    let builtin = color == 7 ? ["橙色", "Orange"] : ["紫色", "Purple"]
+    for name in favorites + NSWorkspace.shared.fileLabels + builtin where !name.isEmpty {
+        try? (probe as NSURL).setResourceValue([name], forKey: .tagNamesKey)
+        if rawTags(probe) == ["\(name)\n\(color)"] { return name }
     }
-    tags.removeAll { ["Dlog", "Dlog2"].contains($0.components(separatedBy: "\n")[0]) }
-    tags.append("\(tag)\n\(color)")
-    guard let data = try? PropertyListSerialization.data(fromPropertyList: tags, format: .binary, options: 0)
-    else { return false }
-    return data.withUnsafeBytes { setxattr(url.path, tagsAttr, $0.baseAddress, data.count, 0, 0) } == 0
+    return nil
+}
+
+// 保留文件原有的其他标签，去掉旧的 Dlog / Dlog2，再加上名称标签和颜色标签
+func writeTag(_ url: URL, tag: String, colorTag: String?) -> Bool {
+    var names = rawTags(url).map { $0.components(separatedBy: "\n")[0] }
+    names.removeAll { $0 == "Dlog" || $0 == "Dlog2" }
+    names.append(tag)
+    if let colorTag, !names.contains(colorTag) { names.append(colorTag) }
+    // URLResourceValues.tagNames 的 setter 要 macOS 26，用 NSURL 的写法兼容旧系统
+    return (try? (url as NSURL).setResourceValue(names, forKey: .tagNamesKey)) != nil
 }
 
 // 移到所在目录下的 Dlog / Dlog2 子文件夹，返回移动成功的新位置
@@ -342,14 +365,15 @@ final class Store: ObservableObject {
     }
 
     func applyTags() {
-        let jobs = clips.compactMap { c -> (URL, String, Int)? in
+        let colorTags = [7: finderColorTagName(7), 3: finderColorTagName(3)]
+        let jobs = clips.compactMap { c -> (URL, String, String?)? in
             guard let tag = c.mode.folderName, let color = c.mode.tagColor else { return nil }
-            return (c.url, tag, color)
+            return (c.url, tag, colorTags[color] ?? nil)
         }
         Task {
             let ok = Counter()
             await runInBackground("正在打标签", jobs) { job in
-                if writeTag(job.0, tag: job.1, color: job.2) { ok.add() }
+                if writeTag(job.0, tag: job.1, colorTag: job.2) { ok.add() }
             }
             show("tag.fill", "已为 \(ok.value) 个视频添加 Finder 标签")
         }
@@ -574,7 +598,7 @@ struct ContentView: View {
             }
             Spacer()
             Button { store.applyTags() } label: { Label("打 Finder 标签", systemImage: "tag") }
-                .help("给每个视频加上橙色 Dlog / 紫色 Dlog2 标签，文件不移动")
+                .help("给 D-Log 视频加上 Dlog 和橙色标签、D-Log2 加上 Dlog2 和紫色标签，文件不移动")
             Button { store.exportResolveCSV() } label: { Label("导出到达芬奇", systemImage: "square.and.arrow.up") }
                 .help("导出元数据 CSV，在达芬奇里导入后片段会带上 D-Log / D-Log2 关键词")
             Button { confirmMove = true } label: { Label("整理到文件夹", systemImage: "folder.badge.plus") }

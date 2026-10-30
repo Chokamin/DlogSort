@@ -15,7 +15,7 @@ DJI Osmo Pocket 4P 有 D-Log 和 D-Log2 两种色彩模式，但导入电脑后�
 - **拖进来就识别**：把视频或整个文件夹拖进窗口（或拖到 Dock 图标上），子文件夹也会扫描
 - **列表展示**：缩略图、时长、镜头、ISO、分辨率、帧率，以及醒目的 D-Log / D-Log2 标记
 - **筛选**：全部 / D-Log / D-Log2 / 其他
-- **打 Finder 标签**：给视频加上橙色 `Dlog` 或紫色 `Dlog2` 标签，文件位置不变
+- **打 Finder 标签**：D-Log 视频加上 `Dlog` 和橙色标签，D-Log2 加上 `Dlog2` 和紫色标签，文件位置不变。颜色用的是 Finder 自带的颜色标签，在 Finder 里编辑标签也不会丢
 - **导出到达芬奇**：生成元数据 CSV，导入 DaVinci Resolve 后片段带上 `D-Log` / `D-Log2` 关键词，可自动生成智能媒体夹
 - **整理到文件夹**：移到所在目录下的 `Dlog/`、`Dlog2/` 子文件夹，同名 `.LRF` 代理文件和 `.SRT` 字幕一起移动
 - 双击播放，右键在 Finder 中显示，⌘O 添加文件
@@ -78,7 +78,7 @@ Mac 用户也可以试试「打 Finder 标签」，再在达芬奇 **偏好设�
 
 ### 发布新版本
 
-1. 在 `DlogSort/build.sh` 里把 `VERSION` 改成新版本号，`BUILD` 加 1（Sparkle 靠 `BUILD` 判断新旧）
+1. 在 `DlogSort/build.sh` 里改 `VERSION`：只修问题时加最后一位（1.3.1 → 1.3.2），有新功能时加中间一位（1.3.x → 1.4）。`BUILD` 每次都加 1（Sparkle 靠它判断新旧）
 2. 编译并公证（需先用 `xcrun notarytool store-credentials DlogSort-notary` 保存一次凭据）：
 
    ```bash
